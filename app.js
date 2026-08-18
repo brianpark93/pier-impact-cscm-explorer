@@ -107,12 +107,15 @@ async function initThree() {
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(45, wrap.clientWidth / wrap.clientHeight, 1, 100000);
 
+  // The pier's tall axis is Z in the source data (0..~4840mm), but
+  // Three.js/OrbitControls treat Y as "up" by default -- swap Y/Z here so
+  // the pier renders upright instead of lying on its side.
   const { verts, faces } = state.mesh;
   let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity, zmin = Infinity, zmax = -Infinity;
   for (const [x, y, z] of verts) {
     if (x < xmin) xmin = x; if (x > xmax) xmax = x;
-    if (y < ymin) ymin = y; if (y > ymax) ymax = y;
-    if (z < zmin) zmin = z; if (z > zmax) zmax = z;
+    if (z < ymin) ymin = z; if (z > ymax) ymax = z;
+    if (y < zmin) zmin = y; if (y > zmax) zmax = y;
   }
   const cx = (xmin + xmax) / 2, cy = (ymin + ymax) / 2, cz = (zmin + zmax) / 2;
   const diag = Math.sqrt((xmax - xmin) ** 2 + (ymax - ymin) ** 2 + (zmax - zmin) ** 2);
@@ -126,7 +129,7 @@ async function initThree() {
     const quad = [verts[f[0]], verts[f[1]], verts[f[2]], verts[f[3]]];
     const tri = [quad[0], quad[1], quad[2], quad[0], quad[2], quad[3]];
     for (const v of tri) {
-      positions[p++] = v[0]; positions[p++] = v[1]; positions[p++] = v[2];
+      positions[p++] = v[0]; positions[p++] = v[2]; positions[p++] = v[1];
     }
   }
   const geo = new THREE.BufferGeometry();
