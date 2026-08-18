@@ -188,7 +188,23 @@ main {
   margin: 0 0 10px;
   font-size: 1rem;
   color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
+
+#yield-reset-zoom {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  background: #1e242c;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+
+#yield-reset-zoom:hover { color: var(--text); border-color: var(--accent); }
 
 #damage-canvas-wrap {
   position: relative;

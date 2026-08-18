@@ -7,6 +7,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏗️</text></svg>">
 <link rel="stylesheet" href="style.css">
 <script src="vendor/chart.umd.js"></script>
+<script src="vendor/chartjs-plugin-zoom.min.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -61,9 +62,9 @@
     </div>
 
     <div class="panel">
-      <h2>CSCM yield/failure surface</h2>
+      <h2>CSCM yield/failure surface <button id="yield-reset-zoom" type="button">reset zoom</button></h2>
       <canvas id="yield-chart"></canvas>
-      <p class="hint">shear-failure/cap surface Fcont(J1) for the selected theta/alpha (lamda, beta, R, X0 fixed at project defaults)</p>
+      <p class="hint">shear-failure/cap surface Fcont(J1) for the selected theta/alpha (lamda, beta, R, X0 fixed at project defaults) &middot; scroll to zoom, drag to pan</p>
     </div>
   </section>
 </main>

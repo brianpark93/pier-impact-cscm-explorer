@@ -270,6 +270,7 @@ function renderDamageComparisons() {
 // (lamda/beta/R/X0 are not swept in this factorial grid).
 const CSCM_FIXED = { lamda: 10.51, beta: 0.01929, R: 5.0, kappa0: 88.99 };
 const J1_MIN = -10, J1_MAX = 350, J1_N = 120;
+const YIELD_Y_MAX = 160; // fixed default view; Fcont stays well under this across the swept theta/alpha range -- scroll/drag to zoom in if needed
 
 function cscmYieldCurve(alpha, theta, fixed = CSCM_FIXED) {
   const { lamda, beta, R, kappa0 } = fixed;
@@ -374,9 +375,16 @@ function initCharts() {
       animation: false, responsive: true, maintainAspectRatio: false, parsing: false,
       scales: {
         x: { type: "linear", min: J1_MIN, max: J1_MAX, title: { display: true, text: "J1 (MPa)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
-        y: { min: 0, title: { display: true, text: "sqrt(J2) (MPa)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
+        y: { min: 0, max: YIELD_Y_MAX, title: { display: true, text: "sqrt(J2) (MPa)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
       },
-      plugins: { legend: { labels: { color: "#e8eaed" } } },
+      plugins: {
+        legend: { labels: { color: "#e8eaed" } },
+        zoom: {
+          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "xy" },
+          pan: { enabled: true, mode: "xy" },
+          limits: { x: { min: J1_MIN, max: J1_MAX }, y: { min: 0, max: YIELD_Y_MAX * 3 } },
+        },
+      },
     },
   });
 }
@@ -470,6 +478,7 @@ async function main() {
 
   buildToggles();
   document.getElementById("pin-btn").addEventListener("click", addCurrentToPinned);
+  document.getElementById("yield-reset-zoom").addEventListener("click", () => { if (chartYield) chartYield.resetZoom(); });
   await initThree();
   try {
     initCharts();
