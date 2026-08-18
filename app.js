@@ -400,9 +400,13 @@ function initCharts() {
       plugins: {
         legend: { labels: { color: "#e8eaed" } },
         zoom: {
-          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "xy" },
-          pan: { enabled: true, mode: "xy" },
-          limits: { x: { min: J1_MIN, max: J1_MAX }, y: { min: 0, max: YIELD_Y_MAX * 3 } },
+          // y is sqrt(J2) -- never negative and always shown fixed at
+          // [0, YIELD_Y_MAX], so only J1 (x) is pannable/zoomable. Locking
+          // y here is what fixes the axis drifting further negative on
+          // every drag.
+          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" },
+          pan: { enabled: true, mode: "x" },
+          limits: { x: { min: J1_MIN, max: J1_MAX } },
         },
       },
     },
