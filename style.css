@@ -305,7 +305,8 @@ main {
 
 .panel canvas#force-chart,
 .panel canvas#p1-chart,
-.panel canvas#p4-chart {
+.panel canvas#p4-chart,
+.panel canvas#yield-chart {
   height: 380px !important;
 }
 
