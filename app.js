@@ -186,7 +186,7 @@ function updateDamageColors(caseIdx) {
 // ---------- Chart.js curves ----------
 let chartForce, chartP1, chartP4;
 
-function makeChart(canvasId, yLabel, expT, expY, color) {
+function makeChart(canvasId, yLabel, expT, expY, color, xMax) {
   const ctx = document.getElementById(canvasId).getContext("2d");
   return new Chart(ctx, {
     type: "line",
@@ -202,7 +202,7 @@ function makeChart(canvasId, yLabel, expT, expY, color) {
       maintainAspectRatio: false,
       parsing: false,
       scales: {
-        x: { type: "linear", title: { display: true, text: "time (s)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
+        x: { type: "linear", min: 0, max: xMax, title: { display: true, text: "time (s)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
         y: { title: { display: true, text: yLabel, color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
       },
       plugins: { legend: { labels: { color: "#e8eaed" } } },
@@ -211,9 +211,9 @@ function makeChart(canvasId, yLabel, expT, expY, color) {
 }
 
 function initCharts() {
-  chartForce = makeChart("force-chart", "force (kN)", state.expRef.force.t, state.expRef.force.y, "#4f9dff");
-  chartP1 = makeChart("p1-chart", "P1 disp (mm)", state.expRef.P1.t, state.expRef.P1.y, "#4fd18b");
-  chartP4 = makeChart("p4-chart", "P4 disp (mm)", state.expRef.P4.t, state.expRef.P4.y, "#ff8a4f");
+  chartForce = makeChart("force-chart", "force (kN)", state.expRef.force.t, state.expRef.force.y, "#4f9dff", 0.03);
+  chartP1 = makeChart("p1-chart", "P1 disp (mm)", state.expRef.P1.t, state.expRef.P1.y, "#4fd18b", 0.2);
+  chartP4 = makeChart("p4-chart", "P4 disp (mm)", state.expRef.P4.t, state.expRef.P4.y, "#ff8a4f", 0.2);
 }
 
 function updateCharts(label) {
