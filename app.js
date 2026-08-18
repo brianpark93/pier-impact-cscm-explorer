@@ -1,6 +1,3 @@
-import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-
 /* Test1 5^5 factorial explorer -- static site, no backend.
  * Data layout (data/):
  *   params.json   -- {levels: {theta:[...], alpha:[...], ...}, param_names: [...],
@@ -89,11 +86,20 @@ function buildToggles() {
 }
 
 // ---------- Three.js damage viewer ----------
-let renderer, scene, camera, controls, mesh3d, colorAttr;
+let renderer, scene, camera, controls, mesh3d, colorAttr, THREE, threeReady = false;
 
-function initThree() {
+async function initThree() {
   const wrap = document.getElementById("damage-canvas-wrap");
   const canvas = document.getElementById("damage-canvas");
+  try {
+    THREE = await import("three");
+    const { OrbitControls } = await import("three/addons/controls/OrbitControls.js");
+    THREE.OrbitControls = OrbitControls;
+  } catch (e) {
+    console.error("Three.js failed to load from CDN", e);
+    wrap.innerHTML = '<p style="color:#ff8a4f;padding:16px;">3D damage viewer failed to load (CDN unreachable). Force/P1/P4 curves below still work.</p>';
+    return;
+  }
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio || 1);
   renderer.setSize(wrap.clientWidth, wrap.clientHeight);
@@ -138,7 +144,7 @@ function initThree() {
   camera.position.set(cx + diag * 0.55, cy + diag * 0.55, cz + diag * 0.4);
   camera.lookAt(cx, cy, cz);
 
-  controls = new OrbitControls(camera, renderer.domElement);
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
   controls.target.set(cx, cy, cz);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
@@ -150,6 +156,7 @@ function initThree() {
     camera.updateProjectionMatrix();
   });
 
+  threeReady = true;
   animate();
 }
 
@@ -160,6 +167,7 @@ function animate() {
 }
 
 function updateDamageColors(caseIdx) {
+  if (!threeReady) return;
   const nFaces = state.params.n_faces;
   const offset = caseIdx * nFaces;
   const bytes = state.damageBytes;
@@ -209,6 +217,7 @@ function initCharts() {
 }
 
 function updateCharts(label) {
+  if (!chartForce) return;
   const c = state.curves[label];
   if (!c) return;
   chartForce.data.datasets[0].data = (c.t_force || []).map((t, i) => ({ x: t, y: c.force[i] }));
@@ -253,8 +262,12 @@ async function main() {
   params.param_names.forEach(name => { state.selected[name] = 2; }); // default: middle level of each
 
   buildToggles();
-  initThree();
-  initCharts();
+  await initThree();
+  try {
+    initCharts();
+  } catch (e) {
+    console.error("Chart.js failed to load from CDN", e);
+  }
 
   const [damageBytes, curves] = await Promise.all([
     loadBinary("data/damage_all.bin"),
