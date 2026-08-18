@@ -176,13 +176,15 @@ async function initThree() {
   animate();
 }
 
-// While comparing (>=1 pinned case), freeze the main damage view to the
-// same stationary isometric shot as the comparison thumbnails, so it's a
-// fair like-for-like view rather than whatever angle the user last dragged
-// to. Re-enables free orbiting once the comparison list is emptied.
+// While comparing (>=1 pinned case), the big interactive canvas is hidden
+// entirely and replaced by the (now enlarged) stationary comparison row --
+// see renderDamageComparisons. Re-shows the interactive view once the
+// comparison list is emptied.
 function updateMainViewLockState() {
   if (!threeReady) return;
   const locked = state.pinned.length > 0;
+  const wrap = document.getElementById("damage-canvas-wrap");
+  wrap.style.display = locked ? "none" : "";
   controls.enabled = !locked;
   if (locked) {
     const { cx, cy, cz, diag } = state.camFrame;
@@ -228,7 +230,7 @@ function updateDamageColors(caseIdx) {
 // color attribute differs per case. Returns a data: URL.
 function renderDamageThumbnail(caseIdx) {
   if (!threeReady || !state.damageBytes) return null;
-  const size = 260;
+  const size = 480;
   const off = document.createElement("canvas");
   off.width = size; off.height = size;
   const r = new THREE.WebGLRenderer({ canvas: off, antialias: true, alpha: true, preserveDrawingBuffer: true });
@@ -254,31 +256,42 @@ function renderDamageThumbnail(caseIdx) {
   return dataURL;
 }
 
+function addThumbTo(row, caseIdx, label, color, big) {
+  const url = renderDamageThumbnail(caseIdx);
+  if (!url) return;
+  const wrap = document.createElement("div");
+  wrap.className = "damage-thumb" + (big ? " damage-thumb-big" : "");
+  const img = document.createElement("img");
+  img.src = url;
+  img.style.borderColor = color;
+  wrap.appendChild(img);
+  const lbl = document.createElement("div");
+  lbl.className = "thumb-label";
+  const dot = document.createElement("span");
+  dot.className = "dot";
+  dot.style.background = color;
+  lbl.appendChild(dot);
+  const txt = document.createElement("span");
+  txt.textContent = label;
+  lbl.appendChild(txt);
+  wrap.appendChild(lbl);
+  row.appendChild(wrap);
+}
+
+// While comparing, the big interactive canvas is hidden entirely and this
+// row becomes the main view: current selection (live, updates as toggles
+// change) shown first and larger, followed by each pinned case at the
+// same enlarged size. With nothing pinned, the row is empty and the big
+// interactive canvas is shown instead (see updateMainViewLockState).
 function renderDamageComparisons() {
   const row = document.getElementById("damage-compare-row");
   row.innerHTML = "";
   if (!threeReady) return;
-  state.pinned.forEach(p => {
-    const url = renderDamageThumbnail(p.idx);
-    if (!url) return;
-    const wrap = document.createElement("div");
-    wrap.className = "damage-thumb";
-    const img = document.createElement("img");
-    img.src = url;
-    img.style.borderColor = p.color;
-    wrap.appendChild(img);
-    const lbl = document.createElement("div");
-    lbl.className = "thumb-label";
-    const dot = document.createElement("span");
-    dot.className = "dot";
-    dot.style.background = p.color;
-    lbl.appendChild(dot);
-    const txt = document.createElement("span");
-    txt.textContent = p.label;
-    lbl.appendChild(txt);
-    wrap.appendChild(lbl);
-    row.appendChild(wrap);
-  });
+  const comparing = state.pinned.length > 0;
+  if (!comparing) return;
+  const curIdx = caseIndexFromSelection();
+  addThumbTo(row, curIdx, `${caseLabel(curIdx)} (current)`, "#4f9dff", true);
+  state.pinned.forEach(p => addThumbTo(row, p.idx, p.label, p.color, true));
 }
 
 // ---------- CSCM yield surface (computed client-side, no data file needed) ----------
@@ -487,6 +500,7 @@ function onSelectionChanged() {
   updateDamageColors(idx);
   updateCharts(label);
   updateYieldChart();
+  renderDamageComparisons(); // no-op unless comparing -- keeps the live "current" thumbnail in sync with toggles
 }
 
 async function main() {
