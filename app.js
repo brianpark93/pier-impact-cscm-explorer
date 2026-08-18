@@ -149,15 +149,16 @@ async function initThree() {
   // model diagonal) so it marks the impact point/direction without
   // burying the pier itself.
   const IMPACT_X = 500, IMPACT_Y = 0, IMPACT_Z = 1500;
-  const arrowLen = Math.max(200, diag * 0.05);
+  const arrowLen = Math.max(320, diag * 0.09);
   const arrowOrigin = new THREE.Vector3(IMPACT_X + arrowLen, IMPACT_Z, IMPACT_Y); // remapped (x,z,y)
   const arrowDir = new THREE.Vector3(-1, 0, 0);
-  const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLen, 0xff2d2d, arrowLen * 0.32, arrowLen * 0.18);
+  const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLen, 0xff2d2d, arrowLen * 0.32, arrowLen * 0.2);
   arrow.line.material.linewidth = 2;
   scene.add(arrow);
 
   camera.position.set(cx + diag * 0.55, cy + diag * 0.55, cz + diag * 0.4);
   camera.lookAt(cx, cy, cz);
+  state.camFrame = { cx, cy, cz, diag };
 
   controls = new OrbitControlsClass(camera, renderer.domElement);
   controls.target.set(cx, cy, cz);
@@ -181,12 +182,10 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-function updateDamageColors(caseIdx) {
-  if (!threeReady) return;
-  const nFaces = state.params.n_faces;
+function faceColorArray(caseIdx, nFaces, out) {
   const offset = caseIdx * nFaces;
   const bytes = state.damageBytes;
-  const arr = colorAttr.array;
+  const arr = out || new Float32Array(nFaces * 6 * 3);
   let p = 0;
   for (let fi = 0; fi < nFaces; fi++) {
     const d = bytes[offset + fi] / 255; // 0=intact .. 1=failed
@@ -195,7 +194,71 @@ function updateDamageColors(caseIdx) {
       arr[p++] = g; arr[p++] = g; arr[p++] = g;
     }
   }
+  return arr;
+}
+
+function updateDamageColors(caseIdx) {
+  if (!threeReady) return;
+  faceColorArray(caseIdx, state.params.n_faces, colorAttr.array);
   colorAttr.needsUpdate = true;
+}
+
+// Static (non-interactive) thumbnail render of one case's damage, reusing
+// the main scene's shared vertex-position buffer -- only the per-face
+// color attribute differs per case. Returns a data: URL.
+function renderDamageThumbnail(caseIdx) {
+  if (!threeReady || !state.damageBytes) return null;
+  const size = 260;
+  const off = document.createElement("canvas");
+  off.width = size; off.height = size;
+  const r = new THREE.WebGLRenderer({ canvas: off, antialias: true, alpha: true, preserveDrawingBuffer: true });
+  r.setClearColor(0x000000, 0);
+  const s = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(45, 1, 1, 100000);
+  const nFaces = state.params.n_faces;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", mesh3d.geometry.getAttribute("position"));
+  const colArr = faceColorArray(caseIdx, nFaces);
+  geo.setAttribute("color", new THREE.BufferAttribute(colArr, 3));
+  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  const m = new THREE.Mesh(geo, mat);
+  s.add(m);
+  const { cx, cy, cz, diag } = state.camFrame;
+  cam.position.set(cx + diag * 0.55, cy + diag * 0.55, cz + diag * 0.4);
+  cam.lookAt(cx, cy, cz);
+  r.render(s, cam);
+  const dataURL = off.toDataURL("image/png");
+  geo.dispose();
+  mat.dispose();
+  r.dispose();
+  return dataURL;
+}
+
+function renderDamageComparisons() {
+  const row = document.getElementById("damage-compare-row");
+  row.innerHTML = "";
+  if (!threeReady) return;
+  state.pinned.forEach(p => {
+    const url = renderDamageThumbnail(p.idx);
+    if (!url) return;
+    const wrap = document.createElement("div");
+    wrap.className = "damage-thumb";
+    const img = document.createElement("img");
+    img.src = url;
+    img.style.borderColor = p.color;
+    wrap.appendChild(img);
+    const lbl = document.createElement("div");
+    lbl.className = "thumb-label";
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    dot.style.background = p.color;
+    lbl.appendChild(dot);
+    const txt = document.createElement("span");
+    txt.textContent = p.label;
+    lbl.appendChild(txt);
+    wrap.appendChild(lbl);
+    row.appendChild(wrap);
+  });
 }
 
 // ---------- CSCM yield surface (computed client-side, no data file needed) ----------
@@ -368,6 +431,7 @@ function updateYieldChart() {
 function refreshAllCharts() {
   updateCharts(caseLabel(caseIndexFromSelection()));
   updateYieldChart();
+  renderDamageComparisons();
 }
 
 function fmtPct(v) {

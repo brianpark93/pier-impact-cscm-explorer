@@ -215,6 +215,58 @@ main {
   backdrop-filter: blur(2px);
 }
 
+.arrow-legend {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(15, 18, 22, 0.55);
+  color: #e8eaed;
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
+
+#damage-compare-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  margin-top: 10px;
+  padding-bottom: 4px;
+}
+
+.damage-thumb {
+  flex: 0 0 auto;
+  width: 130px;
+}
+
+.damage-thumb img {
+  width: 130px;
+  height: 130px;
+  display: block;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #e3f6e9 0%, #cdecd8 100%);
+  border: 2px solid var(--panel-border);
+}
+
+.damage-thumb .thumb-label {
+  margin-top: 4px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.damage-thumb .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
 .hint {
   margin: 6px 0 0;
   font-size: 0.75rem;

@@ -29,7 +29,7 @@
     <div id="case-info">
       <span id="case-label">--</span>
       <span id="case-metrics"></span>
-      <button id="pin-btn" type="button">+ 비교에 추가</button>
+      <button id="pin-btn" type="button">+ Add to comparison</button>
     </div>
     <div id="pinned-list"></div>
   </section>
@@ -39,8 +39,10 @@
       <h2>Damage (grayscale, 0=intact / 1=failed)</h2>
       <div id="damage-canvas-wrap">
         <canvas id="damage-canvas"></canvas>
+        <div class="arrow-legend">🔴 impact direction</div>
         <div class="mouse-hint">🖱️ drag to rotate &middot; scroll to zoom</div>
       </div>
+      <div id="damage-compare-row"></div>
     </div>
 
     <div class="panel">
