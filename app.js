@@ -176,6 +176,26 @@ async function initThree() {
   animate();
 }
 
+// While comparing (>=1 pinned case), freeze the main damage view to the
+// same stationary isometric shot as the comparison thumbnails, so it's a
+// fair like-for-like view rather than whatever angle the user last dragged
+// to. Re-enables free orbiting once the comparison list is emptied.
+function updateMainViewLockState() {
+  if (!threeReady) return;
+  const locked = state.pinned.length > 0;
+  controls.enabled = !locked;
+  if (locked) {
+    const { cx, cy, cz, diag } = state.camFrame;
+    camera.position.set(cx + diag * 0.55, cy + diag * 0.55, cz + diag * 0.4);
+    controls.target.set(cx, cy, cz);
+    controls.update();
+  }
+  const hint = document.querySelector("#damage-canvas-wrap .mouse-hint");
+  if (hint) {
+    hint.textContent = locked ? "🔒 stationary view while comparing" : "🖱️ drag to rotate · scroll to zoom";
+  }
+}
+
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
@@ -440,6 +460,7 @@ function refreshAllCharts() {
   updateCharts(caseLabel(caseIndexFromSelection()));
   updateYieldChart();
   renderDamageComparisons();
+  updateMainViewLockState();
 }
 
 function fmtPct(v) {
