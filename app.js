@@ -86,18 +86,17 @@ function buildToggles() {
 }
 
 // ---------- Three.js damage viewer ----------
-let renderer, scene, camera, controls, mesh3d, colorAttr, THREE, threeReady = false;
+let renderer, scene, camera, controls, mesh3d, colorAttr, THREE, OrbitControlsClass, threeReady = false;
 
 async function initThree() {
   const wrap = document.getElementById("damage-canvas-wrap");
   const canvas = document.getElementById("damage-canvas");
   try {
     THREE = await import("three");
-    const { OrbitControls } = await import("three/addons/controls/OrbitControls.js");
-    THREE.OrbitControls = OrbitControls;
+    ({ OrbitControls: OrbitControlsClass } = await import("three/addons/controls/OrbitControls.js"));
   } catch (e) {
-    console.error("Three.js failed to load from CDN", e);
-    wrap.innerHTML = '<p style="color:#ff8a4f;padding:16px;">3D damage viewer failed to load (CDN unreachable). Force/P1/P4 curves below still work.</p>';
+    console.error("Three.js failed to load", e);
+    wrap.innerHTML = '<p style="color:#ff8a4f;padding:16px;">3D damage viewer failed to load. Force/P1/P4 curves below still work.</p>';
     return;
   }
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -144,7 +143,7 @@ async function initThree() {
   camera.position.set(cx + diag * 0.55, cy + diag * 0.55, cz + diag * 0.4);
   camera.lookAt(cx, cy, cz);
 
-  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls = new OrbitControlsClass(camera, renderer.domElement);
   controls.target.set(cx, cy, cz);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
