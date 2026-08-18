@@ -52,6 +52,31 @@ function caseLabel(idx) {
   return "case_" + String(idx).padStart(4, "0");
 }
 
+function paramSummary(row) {
+  if (!row) return "";
+  return `θ${row.theta.toFixed(3)} α${row.alpha.toFixed(1)} E${(row.E_MPA / 1000).toFixed(1)} GFC${row.GFC.toFixed(1)} GFT${row.GFT.toFixed(3)}`;
+}
+
+// Onset-sync alignment (additive shift only, never a scale factor -- see
+// project convention in sweep_plotting.find_onset/shift): each curve is
+// independently shifted so the instant it first crosses `frac` of its own
+// peak lands at t=0. Applied to P1/P4 only (not force), per user request.
+function findOnset(t, v, frac = 0.03) {
+  const peak = Math.max(...v);
+  if (!(peak > 0)) return t[0] || 0;
+  const thresh = frac * peak;
+  for (let i = 0; i < t.length; i++) {
+    if (v[i] >= thresh) return t[i];
+  }
+  return t[0] || 0;
+}
+
+function onsetShiftedPoints(t, v) {
+  if (!t || !t.length) return [];
+  const onset = findOnset(t, v);
+  return t.map((tt, i) => ({ x: tt - onset, y: v[i] }));
+}
+
 function buildToggles() {
   const container = document.getElementById("toggle-container");
   container.innerHTML = "";
@@ -256,7 +281,7 @@ function renderDamageThumbnail(caseIdx) {
   return dataURL;
 }
 
-function addThumbTo(row, caseIdx, label, color, big) {
+function addThumbTo(rowEl, caseIdx, label, color, big) {
   const url = renderDamageThumbnail(caseIdx);
   if (!url) return;
   const wrap = document.createElement("div");
@@ -275,7 +300,13 @@ function addThumbTo(row, caseIdx, label, color, big) {
   txt.textContent = label;
   lbl.appendChild(txt);
   wrap.appendChild(lbl);
-  row.appendChild(wrap);
+  if (big) {
+    const params = document.createElement("div");
+    params.className = "thumb-params";
+    params.textContent = paramSummary(state.params.cases[caseIdx]);
+    wrap.appendChild(params);
+  }
+  rowEl.appendChild(wrap);
 }
 
 // While comparing, the big interactive canvas is hidden entirely and this
@@ -341,7 +372,8 @@ function renderPinnedList() {
     chip.appendChild(dot);
     const row = state.params.cases[p.idx];
     const txt = document.createElement("span");
-    txt.textContent = `${p.label}${row && row.combined_score !== undefined ? " (combined " + row.combined_score.toFixed(1) + ")" : ""}`;
+    const scoreTxt = row && row.combined_score !== undefined ? ` (combined ${row.combined_score.toFixed(1)})` : "";
+    txt.textContent = `${p.label}${scoreTxt} -- ${paramSummary(row)}`;
     chip.appendChild(txt);
     const rm = document.createElement("button");
     rm.textContent = "✕";
@@ -371,14 +403,15 @@ function addCurrentToPinned() {
 // ---------- Chart.js curves ----------
 let chartForce, chartP1, chartP4, chartYield;
 
-function makeChart(canvasId, yLabel, expT, expY, color, xMax) {
+function makeChart(canvasId, yLabel, expT, expY, color, xMin, xMax, onsetShift) {
   const ctx = document.getElementById(canvasId).getContext("2d");
+  const expData = onsetShift ? onsetShiftedPoints(expT, expY) : expT.map((t, i) => ({ x: t, y: expY[i] }));
   return new Chart(ctx, {
     type: "line",
     data: {
       datasets: [
         { label: "simulation", data: [], borderColor: color, backgroundColor: "transparent", borderWidth: 2, pointRadius: 0, tension: 0.15 },
-        { label: "experiment (digitized)", data: expT.map((t, i) => ({ x: t, y: expY[i] })), borderColor: "#8a94a3", borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, tension: 0.15 },
+        { label: "experiment (digitized)", data: expData, borderColor: "#8a94a3", borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, tension: 0.15 },
       ],
     },
     options: {
@@ -387,7 +420,7 @@ function makeChart(canvasId, yLabel, expT, expY, color, xMax) {
       maintainAspectRatio: false,
       parsing: false,
       scales: {
-        x: { type: "linear", min: 0, max: xMax, title: { display: true, text: "time (s)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
+        x: { type: "linear", min: xMin, max: xMax, title: { display: true, text: onsetShift ? "time since onset (s)" : "time (s)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
         y: { title: { display: true, text: yLabel, color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
       },
       plugins: { legend: { labels: { color: "#e8eaed" } } },
@@ -396,14 +429,17 @@ function makeChart(canvasId, yLabel, expT, expY, color, xMax) {
 }
 
 function initCharts() {
-  chartForce = makeChart("force-chart", "force (kN)", state.expRef.force.t, state.expRef.force.y, "#4f9dff", 0.03);
-  chartP1 = makeChart("p1-chart", "P1 disp (mm)", state.expRef.P1.t, state.expRef.P1.y, "#4fd18b", 0.2);
-  chartP4 = makeChart("p4-chart", "P4 disp (mm)", state.expRef.P4.t, state.expRef.P4.y, "#ff8a4f", 0.2);
+  chartForce = makeChart("force-chart", "force (kN)", state.expRef.force.t, state.expRef.force.y, "#4f9dff", 0, 0.03, false);
+  chartP1 = makeChart("p1-chart", "P1 disp (mm)", state.expRef.P1.t, state.expRef.P1.y, "#4fd18b", -0.02, 0.2, true);
+  chartP4 = makeChart("p4-chart", "P4 disp (mm)", state.expRef.P4.t, state.expRef.P4.y, "#ff8a4f", -0.02, 0.2, true);
 
   const yctx = document.getElementById("yield-chart").getContext("2d");
   chartYield = new Chart(yctx, {
     type: "line",
-    data: { datasets: [{ label: "current", data: [], borderColor: "#4f9dff", backgroundColor: "transparent", borderWidth: 2, pointRadius: 0, tension: 0.1 }] },
+    data: { datasets: [
+      { label: "current", data: [], borderColor: "#4f9dff", backgroundColor: "transparent", borderWidth: 2, pointRadius: 0, tension: 0.1 },
+      { label: "J1 = 0", data: [{ x: 0, y: 0 }, { x: 0, y: YIELD_Y_MAX }], borderColor: "#6b7280", borderDash: [4, 4], borderWidth: 1, pointRadius: 0 },
+    ] },
     options: {
       animation: false, responsive: true, maintainAspectRatio: false, parsing: false,
       scales: {
@@ -445,8 +481,8 @@ function updateCharts(label) {
   const c = state.curves[label];
   if (c) {
     chartForce.data.datasets[0].data = (c.t_force || []).map((t, i) => ({ x: t, y: c.force[i] }));
-    chartP1.data.datasets[0].data = (c.t_p1 || []).map((t, i) => ({ x: t, y: c.p1[i] }));
-    chartP4.data.datasets[0].data = (c.t_p4 || []).map((t, i) => ({ x: t, y: c.p4[i] }));
+    chartP1.data.datasets[0].data = onsetShiftedPoints(c.t_p1, c.p1);
+    chartP4.data.datasets[0].data = onsetShiftedPoints(c.t_p4, c.p4);
   }
   syncPinnedDatasets(chartForce, 2, p => {
     const pc = state.curves[p.label];
@@ -454,11 +490,11 @@ function updateCharts(label) {
   });
   syncPinnedDatasets(chartP1, 2, p => {
     const pc = state.curves[p.label];
-    return pc ? (pc.t_p1 || []).map((t, i) => ({ x: t, y: pc.p1[i] })) : null;
+    return pc ? onsetShiftedPoints(pc.t_p1, pc.p1) : null;
   });
   syncPinnedDatasets(chartP4, 2, p => {
     const pc = state.curves[p.label];
-    return pc ? (pc.t_p4 || []).map((t, i) => ({ x: t, y: pc.p4[i] })) : null;
+    return pc ? onsetShiftedPoints(pc.t_p4, pc.p4) : null;
   });
 }
 
@@ -467,7 +503,7 @@ function updateYieldChart() {
   const row = state.params.cases[caseIndexFromSelection()];
   chartYield.data.datasets[0].data = cscmYieldCurve(row.alpha, row.theta);
   chartYield.data.datasets[0].label = `current (alpha=${row.alpha}, theta=${row.theta})`;
-  syncPinnedDatasets(chartYield, 1, p => {
+  syncPinnedDatasets(chartYield, 2, p => {
     const r = state.params.cases[p.idx];
     return cscmYieldCurve(r.alpha, r.theta);
   });

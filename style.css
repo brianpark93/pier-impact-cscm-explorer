@@ -281,6 +281,13 @@ main {
   font-size: 0.8rem;
 }
 
+.thumb-params {
+  margin-top: 2px;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-family: "SF Mono", Consolas, monospace;
+}
+
 .damage-thumb .thumb-label {
   margin-top: 4px;
   font-size: 0.7rem;
