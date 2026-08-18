@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Test1 CSCM 5x5x5x5x5 Factorial Explorer</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>RC Pier Impact -- Test1 CSCM Parameter Explorer</h1>
+  <p class="subtitle">5<sup>5</sup> = 3125-case full factorial grid (theta &times; alpha &times; E &times; GFC &times; GFT).
+  Pick a level for each parameter to see the simulated force/displacement response and damage pattern.</p>
+</header>
+
+<main>
+  <section id="controls">
+    <div class="toggle-group" id="toggle-container"></div>
+    <div id="case-info">
+      <span id="case-label">--</span>
+      <span id="case-metrics"></span>
+    </div>
+  </section>
+
+  <section id="views">
+    <div class="panel" id="damage-panel">
+      <h2>Damage (grayscale, 0=intact / 1=failed)</h2>
+      <div id="damage-canvas-wrap"><canvas id="damage-canvas"></canvas></div>
+      <p class="hint">drag to rotate, scroll to zoom</p>
+    </div>
+
+    <div class="panel">
+      <h2>Impact force</h2>
+      <canvas id="force-chart"></canvas>
+    </div>
+
+    <div class="panel">
+      <h2>P1 lateral displacement (top)</h2>
+      <canvas id="p1-chart"></canvas>
+    </div>
+
+    <div class="panel">
+      <h2>P4 lateral displacement (base)</h2>
+      <canvas id="p4-chart"></canvas>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <p>RC pier vehicle-impact CSCM concrete calibration -- Test1 (Chen et al. 2022). Data generated from LS-DYNA solves; solid = simulation, dashed = digitized experimental reference.</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
