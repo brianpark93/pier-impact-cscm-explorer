@@ -99,10 +99,10 @@ async function initThree() {
     wrap.innerHTML = '<p style="color:#ff8a4f;padding:16px;">3D damage viewer failed to load. Force/P1/P4 curves below still work.</p>';
     return;
   }
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio || 1);
   renderer.setSize(wrap.clientWidth, wrap.clientHeight);
-  renderer.setClearColor(0x05070a, 1);
+  renderer.setClearColor(0x000000, 0);
 
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(45, wrap.clientWidth / wrap.clientHeight, 1, 100000);

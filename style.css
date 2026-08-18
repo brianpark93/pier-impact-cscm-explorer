@@ -140,14 +140,29 @@ main {
 }
 
 #damage-canvas-wrap {
+  position: relative;
   width: 100%;
   height: 420px;
   border-radius: 8px;
   overflow: hidden;
-  background: #05070a;
+  background: linear-gradient(135deg, #e3f6e9 0%, #cdecd8 100%);
 }
 
 #damage-canvas { width: 100%; height: 100%; display: block; }
+
+.mouse-hint {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(15, 18, 22, 0.55);
+  color: #e8eaed;
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
 
 .hint {
   margin: 6px 0 0;
