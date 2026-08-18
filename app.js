@@ -143,6 +143,19 @@ async function initThree() {
   mesh3d = new THREE.Mesh(geo, mat);
   scene.add(mesh3d);
 
+  // Impact arrow: impactor strikes the pier's +X face (PIER_R=500mm) at
+  // Y=0 (centerline), Z=1500mm (IMPACT_HEIGHT, see generate_impactor.py),
+  // travelling in -X (initial_velocity vx=-3170). Kept short (~5% of the
+  // model diagonal) so it marks the impact point/direction without
+  // burying the pier itself.
+  const IMPACT_X = 500, IMPACT_Y = 0, IMPACT_Z = 1500;
+  const arrowLen = Math.max(200, diag * 0.05);
+  const arrowOrigin = new THREE.Vector3(IMPACT_X + arrowLen, IMPACT_Z, IMPACT_Y); // remapped (x,z,y)
+  const arrowDir = new THREE.Vector3(-1, 0, 0);
+  const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLen, 0xff2d2d, arrowLen * 0.32, arrowLen * 0.18);
+  arrow.line.material.linewidth = 2;
+  scene.add(arrow);
+
   camera.position.set(cx + diag * 0.55, cy + diag * 0.55, cz + diag * 0.4);
   camera.lookAt(cx, cy, cz);
 
@@ -185,8 +198,81 @@ function updateDamageColors(caseIdx) {
   colorAttr.needsUpdate = true;
 }
 
+// ---------- CSCM yield surface (computed client-side, no data file needed) ----------
+// Ff(J1) = alpha - lamda*exp(-beta*J1) + theta*J1  (shear-failure meridian)
+// X(L)   = L + R*Ff(L)                              (cap position on J1 axis)
+// Fc(J1) = 1 for J1<L, else 1-((J1-L)/(X-L))^2       (elliptical cap multiplier)
+// Fcont(J1) = Ff(J1) * sqrt(max(Fc(J1),0))
+// Fixed params match run_paper_cscm_sweep.ANCHOR / cscm_yield_surface_report.py
+// (lamda/beta/R/X0 are not swept in this factorial grid).
+const CSCM_FIXED = { lamda: 10.51, beta: 0.01929, R: 5.0, kappa0: 88.99 };
+const J1_MIN = -10, J1_MAX = 350, J1_N = 120;
+
+function cscmYieldCurve(alpha, theta, fixed = CSCM_FIXED) {
+  const { lamda, beta, R, kappa0 } = fixed;
+  const Ff = j1 => alpha - lamda * Math.exp(-beta * j1) + theta * j1;
+  const L = kappa0;
+  const X = L + R * Ff(L);
+  const pts = [];
+  for (let i = 0; i < J1_N; i++) {
+    const j1 = J1_MIN + (J1_MAX - J1_MIN) * i / (J1_N - 1);
+    const ff = Ff(j1);
+    const fc = j1 < L ? 1 : 1 - ((j1 - L) / (X - L)) ** 2;
+    const fcont = fc > 0 ? ff * Math.sqrt(fc) : 0;
+    pts.push({ x: j1, y: Math.max(0, fcont) });
+  }
+  return pts;
+}
+
+// ---------- Comparison / pin feature ----------
+const PIN_COLORS = ["#ffd166", "#06d6a0", "#ef476f", "#8338ec", "#3a86ff", "#fb5607", "#ffb4a2"];
+state.pinned = []; // [{idx, label, color}]
+
+function pinColorFor(n) {
+  return PIN_COLORS[n % PIN_COLORS.length];
+}
+
+function renderPinnedList() {
+  const el = document.getElementById("pinned-list");
+  el.innerHTML = "";
+  state.pinned.forEach(p => {
+    const chip = document.createElement("div");
+    chip.className = "pin-chip";
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    dot.style.background = p.color;
+    chip.appendChild(dot);
+    const row = state.params.cases[p.idx];
+    const txt = document.createElement("span");
+    txt.textContent = `${p.label}${row && row.combined_score !== undefined ? " (combined " + row.combined_score.toFixed(1) + ")" : ""}`;
+    chip.appendChild(txt);
+    const rm = document.createElement("button");
+    rm.textContent = "✕";
+    rm.addEventListener("click", () => {
+      state.pinned = state.pinned.filter(x => x.idx !== p.idx);
+      renderPinnedList();
+      refreshAllCharts();
+    });
+    chip.appendChild(rm);
+    el.appendChild(chip);
+  });
+}
+
+function addCurrentToPinned() {
+  const idx = caseIndexFromSelection();
+  if (state.pinned.some(p => p.idx === idx)) return;
+  if (state.pinned.length >= PIN_COLORS.length) {
+    state.pinned.shift();
+  }
+  state.pinned.push({ idx, label: caseLabel(idx), color: pinColorFor(state.pinned.length) });
+  // recolor sequentially so chip colors always match chart line colors
+  state.pinned.forEach((p, i) => { p.color = pinColorFor(i); });
+  renderPinnedList();
+  refreshAllCharts();
+}
+
 // ---------- Chart.js curves ----------
-let chartForce, chartP1, chartP4;
+let chartForce, chartP1, chartP4, chartYield;
 
 function makeChart(canvasId, yLabel, expT, expY, color, xMax) {
   const ctx = document.getElementById(canvasId).getContext("2d");
@@ -216,18 +302,72 @@ function initCharts() {
   chartForce = makeChart("force-chart", "force (kN)", state.expRef.force.t, state.expRef.force.y, "#4f9dff", 0.03);
   chartP1 = makeChart("p1-chart", "P1 disp (mm)", state.expRef.P1.t, state.expRef.P1.y, "#4fd18b", 0.2);
   chartP4 = makeChart("p4-chart", "P4 disp (mm)", state.expRef.P4.t, state.expRef.P4.y, "#ff8a4f", 0.2);
+
+  const yctx = document.getElementById("yield-chart").getContext("2d");
+  chartYield = new Chart(yctx, {
+    type: "line",
+    data: { datasets: [{ label: "current", data: [], borderColor: "#4f9dff", backgroundColor: "transparent", borderWidth: 2, pointRadius: 0, tension: 0.1 }] },
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false, parsing: false,
+      scales: {
+        x: { type: "linear", min: J1_MIN, max: J1_MAX, title: { display: true, text: "J1 (MPa)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
+        y: { min: 0, title: { display: true, text: "sqrt(J2) (MPa)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
+      },
+      plugins: { legend: { labels: { color: "#e8eaed" } } },
+    },
+  });
+}
+
+// Remove any extra (pinned-case) datasets beyond the fixed base ones, then
+// re-add one dataset per currently pinned case, in matching colors.
+function syncPinnedDatasets(chart, nBase, buildData) {
+  chart.data.datasets.length = nBase;
+  state.pinned.forEach(p => {
+    const data = buildData(p);
+    chart.data.datasets.push({
+      label: p.label, data: data || [], borderColor: p.color, backgroundColor: "transparent",
+      borderWidth: 1.5, pointRadius: 0, tension: 0.15, borderDash: data ? [] : [2, 2],
+    });
+  });
+  chart.update();
 }
 
 function updateCharts(label) {
   if (!chartForce) return;
   const c = state.curves[label];
-  if (!c) return;
-  chartForce.data.datasets[0].data = (c.t_force || []).map((t, i) => ({ x: t, y: c.force[i] }));
-  chartForce.update();
-  chartP1.data.datasets[0].data = (c.t_p1 || []).map((t, i) => ({ x: t, y: c.p1[i] }));
-  chartP1.update();
-  chartP4.data.datasets[0].data = (c.t_p4 || []).map((t, i) => ({ x: t, y: c.p4[i] }));
-  chartP4.update();
+  if (c) {
+    chartForce.data.datasets[0].data = (c.t_force || []).map((t, i) => ({ x: t, y: c.force[i] }));
+    chartP1.data.datasets[0].data = (c.t_p1 || []).map((t, i) => ({ x: t, y: c.p1[i] }));
+    chartP4.data.datasets[0].data = (c.t_p4 || []).map((t, i) => ({ x: t, y: c.p4[i] }));
+  }
+  syncPinnedDatasets(chartForce, 2, p => {
+    const pc = state.curves[p.label];
+    return pc ? (pc.t_force || []).map((t, i) => ({ x: t, y: pc.force[i] })) : null;
+  });
+  syncPinnedDatasets(chartP1, 2, p => {
+    const pc = state.curves[p.label];
+    return pc ? (pc.t_p1 || []).map((t, i) => ({ x: t, y: pc.p1[i] })) : null;
+  });
+  syncPinnedDatasets(chartP4, 2, p => {
+    const pc = state.curves[p.label];
+    return pc ? (pc.t_p4 || []).map((t, i) => ({ x: t, y: pc.p4[i] })) : null;
+  });
+}
+
+function updateYieldChart() {
+  if (!chartYield) return;
+  const row = state.params.cases[caseIndexFromSelection()];
+  chartYield.data.datasets[0].data = cscmYieldCurve(row.alpha, row.theta);
+  chartYield.data.datasets[0].label = `current (alpha=${row.alpha}, theta=${row.theta})`;
+  syncPinnedDatasets(chartYield, 1, p => {
+    const r = state.params.cases[p.idx];
+    return cscmYieldCurve(r.alpha, r.theta);
+  });
+}
+
+function refreshAllCharts() {
+  updateCharts(caseLabel(caseIndexFromSelection()));
+  updateYieldChart();
 }
 
 function fmtPct(v) {
@@ -249,6 +389,7 @@ function onSelectionChanged() {
   }
   updateDamageColors(idx);
   updateCharts(label);
+  updateYieldChart();
 }
 
 async function main() {
@@ -264,6 +405,7 @@ async function main() {
   params.param_names.forEach(name => { state.selected[name] = 2; }); // default: middle level of each
 
   buildToggles();
+  document.getElementById("pin-btn").addEventListener("click", addCurrentToPinned);
   await initThree();
   try {
     initCharts();

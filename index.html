@@ -29,7 +29,9 @@
     <div id="case-info">
       <span id="case-label">--</span>
       <span id="case-metrics"></span>
+      <button id="pin-btn" type="button">+ 비교에 추가</button>
     </div>
+    <div id="pinned-list"></div>
   </section>
 
   <section id="views">
@@ -54,6 +56,12 @@
     <div class="panel">
       <h2>P4 lateral displacement (base)</h2>
       <canvas id="p4-chart"></canvas>
+    </div>
+
+    <div class="panel">
+      <h2>CSCM yield/failure surface</h2>
+      <canvas id="yield-chart"></canvas>
+      <p class="hint">shear-failure/cap surface Fcont(J1) for the selected theta/alpha (lamda, beta, R, X0 fixed at project defaults)</p>
     </div>
   </section>
 </main>

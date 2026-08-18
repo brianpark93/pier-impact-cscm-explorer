@@ -116,6 +116,57 @@ main {
   color: var(--text-muted);
 }
 
+#pin-btn {
+  margin-left: auto;
+  background: var(--accent);
+  border: none;
+  color: #06121f;
+  font-weight: 600;
+  font-size: 0.8rem;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#pin-btn:hover { filter: brightness(1.08); }
+
+#pinned-list {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pin-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #1e242c;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 4px 6px 4px 10px;
+  font-size: 0.78rem;
+}
+
+.pin-chip .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.pin-chip button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
+.pin-chip button:hover { color: #ff8a4f; }
+
 #views {
   display: grid;
   grid-template-columns: 1fr 1fr;
