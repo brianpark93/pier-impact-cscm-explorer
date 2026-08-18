@@ -1,3 +1,6 @@
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
 /* Test1 5^5 factorial explorer -- static site, no backend.
  * Data layout (data/):
  *   params.json   -- {levels: {theta:[...], alpha:[...], ...}, param_names: [...],
@@ -135,7 +138,7 @@ function initThree() {
   camera.position.set(cx + diag * 0.55, cy + diag * 0.55, cz + diag * 0.4);
   camera.lookAt(cx, cy, cz);
 
-  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(cx, cy, cz);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
