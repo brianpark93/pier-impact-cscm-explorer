@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Test1 CSCM 5x5x5x5x5 Factorial Explorer</title>
+<title>CSCM 5x5x5x5x5 Factorial Explorer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏗️</text></svg>">
 <link rel="stylesheet" href="style.css">
 <script src="vendor/chart.umd.js"></script>
@@ -19,13 +19,17 @@
 </head>
 <body>
 <header>
-  <h1>RC Pier Impact -- Test1 CSCM Parameter Explorer</h1>
+  <h1>RC Pier Impact -- CSCM Parameter Explorer</h1>
   <p class="subtitle">5<sup>5</sup> = 3125-case full factorial grid (theta &times; alpha &times; E &times; GFC &times; GFT).
   Pick a level for each parameter to see the simulated force/displacement response and damage pattern.</p>
 </header>
 
 <main>
   <section id="controls">
+    <div class="test-switch">
+      <button type="button" data-test="test1" class="active">Test 1</button>
+      <button type="button" data-test="test2">Test 2</button>
+    </div>
     <div class="toggle-group" id="toggle-container"></div>
     <div id="case-info">
       <span id="case-label">--</span>

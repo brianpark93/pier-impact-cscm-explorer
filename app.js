@@ -539,34 +539,68 @@ function onSelectionChanged() {
   renderDamageComparisons(); // no-op unless comparing -- keeps the live "current" thumbnail in sync with toggles
 }
 
-async function main() {
-  const [params, mesh, expRef] = await Promise.all([
-    loadJSON("data/params.json"),
-    loadJSON("data/mesh.json"),
-    loadJSON("data/exp_ref.json"),
+// The concrete mesh geometry is identical across Test1/Test2 (same shared
+// mesh always) -- so switching tests only needs to swap params/curves/
+// exp_ref/damage bytes and rebuild the toggles + exp-reference chart
+// datasets, not the Three.js scene itself.
+function setExpDataset(chart, expT, expY, onsetShift) {
+  chart.data.datasets[1].data = onsetShift ? onsetShiftedPoints(expT, expY) : expT.map((t, i) => ({ x: t, y: expY[i] }));
+}
+
+async function loadTestData(testId) {
+  const [params, expRef, damageBytes, curves] = await Promise.all([
+    loadJSON(`data/${testId}/params.json`),
+    loadJSON(`data/${testId}/exp_ref.json`),
+    loadBinary(`data/${testId}/damage_all.bin`),
+    loadJSON(`data/${testId}/curves.json`),
   ]);
+  return { params, expRef, damageBytes, curves };
+}
+
+async function switchTest(testId) {
+  if (state.testId === testId) return;
+  document.querySelectorAll(".test-switch button").forEach(b => b.classList.toggle("active", b.dataset.test === testId));
+  const { params, expRef, damageBytes, curves } = await loadTestData(testId);
+  state.testId = testId;
   state.params = params;
-  state.mesh = mesh;
   state.expRef = expRef;
+  state.damageBytes = damageBytes;
+  state.curves = curves;
+  state.pinned = [];
+  params.param_names.forEach(name => { state.selected[name] = 2; });
+
+  buildToggles();
+  renderPinnedList();
+  if (chartForce) {
+    setExpDataset(chartForce, expRef.force.t, expRef.force.y, false);
+    setExpDataset(chartP1, expRef.P1.t, expRef.P1.y, true);
+    setExpDataset(chartP4, expRef.P4.t, expRef.P4.y, true);
+  }
+  onSelectionChanged();
+}
+
+async function main() {
+  const mesh = await loadJSON("data/test1/mesh.json");
+  state.mesh = mesh;
+  const { params, expRef, damageBytes, curves } = await loadTestData("test1");
+  state.testId = "test1";
+  state.params = params;
+  state.expRef = expRef;
+  state.damageBytes = damageBytes;
+  state.curves = curves;
 
   params.param_names.forEach(name => { state.selected[name] = 2; }); // default: middle level of each
 
   buildToggles();
   document.getElementById("pin-btn").addEventListener("click", addCurrentToPinned);
   document.getElementById("yield-reset-zoom").addEventListener("click", () => { if (chartYield) chartYield.resetZoom(); });
+  document.querySelectorAll(".test-switch button").forEach(b => b.addEventListener("click", () => switchTest(b.dataset.test)));
   await initThree();
   try {
     initCharts();
   } catch (e) {
     console.error("Chart.js failed to load from CDN", e);
   }
-
-  const [damageBytes, curves] = await Promise.all([
-    loadBinary("data/damage_all.bin"),
-    loadJSON("data/curves.json"),
-  ]);
-  state.damageBytes = damageBytes;
-  state.curves = curves;
 
   onSelectionChanged();
 }

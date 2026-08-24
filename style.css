@@ -45,6 +45,31 @@ main {
   margin-bottom: 20px;
 }
 
+.test-switch {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.test-switch button {
+  background: #1e242c;
+  border: 1px solid var(--panel-border);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 7px 18px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.test-switch button:hover { color: var(--text); }
+
+.test-switch button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06121f;
+}
+
 .toggle-group {
   display: flex;
   flex-wrap: wrap;
