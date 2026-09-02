@@ -94,6 +94,79 @@ function onsetShiftedPoints(t, v, baselineMode) {
   return t.map((tt, i) => ({ x: tt - onset, y: v[i] - baseline }));
 }
 
+// Linear interpolation with out-of-range -> null (matches np.interp's
+// left=np.nan, right=np.nan used by sweep_plotting.xcorr_align). Assumes
+// xs is sorted ascending.
+function interpNullOutside(x, xs, ys) {
+  if (x < xs[0] || x > xs[xs.length - 1]) return null;
+  let i = 0;
+  while (i < xs.length - 1 && xs[i + 1] < x) i++;
+  const x0 = xs[i], x1 = xs[i + 1], y0 = ys[i], y1 = ys[i + 1];
+  if (x1 === x0) return y0;
+  return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+}
+
+function pearsonCorr(a, b) {
+  const n = a.length;
+  const meanA = a.reduce((s, v) => s + v, 0) / n;
+  const meanB = b.reduce((s, v) => s + v, 0) / n;
+  let num = 0, denA = 0, denB = 0;
+  for (let i = 0; i < n; i++) {
+    const da = a[i] - meanA, db = b[i] - meanB;
+    num += da * db; denA += da * da; denB += db * db;
+  }
+  const den = Math.sqrt(denA * denB);
+  return den > 0 ? num / den : 0;
+}
+
+// Port of sweep_plotting.xcorr_align (2026-07-23 project convention): the
+// extra TIME-only lag (beyond onset-sync) that best matches target's SHAPE
+// against ref, by grid-searching lag and maximizing Pearson correlation
+// (scale-invariant, so amplitude mismatches don't bias the search). Never
+// applies a scale factor -- shift only.
+function xcorrAlign(tRef, vRef, tTarget, vTarget, maxLag = 0.05, nGrid = 600, nLags = 101) {
+  const tMin = Math.max(tRef[0], tTarget[0] - maxLag);
+  const tMax = Math.min(tRef[tRef.length - 1], tTarget[tTarget.length - 1] + maxLag);
+  if (tMax <= tMin) return { lag: 0, corr: 0 };
+  const grid = [];
+  for (let i = 0; i < nGrid; i++) grid.push(tMin + (tMax - tMin) * i / (nGrid - 1));
+  const refG = grid.map(g => interpNullOutside(g, tRef, vRef));
+  let bestLag = 0, bestCorr = -Infinity;
+  for (let li = 0; li < nLags; li++) {
+    const lag = -maxLag + (2 * maxLag) * li / (nLags - 1);
+    const shiftedT = tTarget.map(t => t + lag);
+    const pairsA = [], pairsB = [];
+    for (let i = 0; i < grid.length; i++) {
+      const tg = interpNullOutside(grid[i], shiftedT, vTarget);
+      if (refG[i] !== null && tg !== null) { pairsA.push(refG[i]); pairsB.push(tg); }
+    }
+    if (pairsA.length < grid.length / 4) continue;
+    const corr = pearsonCorr(pairsA, pairsB);
+    if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
+  }
+  return { lag: bestLag, corr: bestCorr };
+}
+
+// Full sim-curve alignment against an exp reference: onset-sync + baseline-
+// zero (both sim/exp per their own scheme above) + the extra xcorr lag
+// refinement on top, mirroring report_best_vs_exp_cases.py exactly. Used
+// for every sim P1/P4 dataset (current selection + each pinned case).
+function alignSimToExp(tSim, vSim, tExp, vExp, maxLag = 0.05) {
+  if (!tSim || !tSim.length) return [];
+  const onsetSim = findOnset(tSim, vSim);
+  const tSimShifted = tSim.map(t => t - onsetSim);
+  const vSimZeroed = vSim.map(v => v - vSim[0]);
+  if (!tExp || !tExp.length) {
+    return tSimShifted.map((t, i) => ({ x: t, y: vSimZeroed[i] }));
+  }
+  const onsetExp = findOnset(tExp, vExp);
+  const tExpShifted = tExp.map(t => t - onsetExp);
+  const baselineExp = (Math.max(...vExp) + Math.min(...vExp)) / 2;
+  const vExpZeroed = vExp.map(v => v - baselineExp);
+  const { lag } = xcorrAlign(tExpShifted, vExpZeroed, tSimShifted, vSimZeroed, maxLag);
+  return tSimShifted.map((t, i) => ({ x: t + lag, y: vSimZeroed[i] }));
+}
+
 function buildToggles() {
   const container = document.getElementById("toggle-container");
   container.innerHTML = "";
@@ -498,8 +571,8 @@ function updateCharts(label) {
   const c = state.curves[label];
   if (c) {
     chartForce.data.datasets[0].data = (c.t_force || []).map((t, i) => ({ x: t, y: c.force[i] }));
-    chartP1.data.datasets[0].data = onsetShiftedPoints(c.t_p1, c.p1, "sim");
-    chartP4.data.datasets[0].data = onsetShiftedPoints(c.t_p4, c.p4, "sim");
+    chartP1.data.datasets[0].data = alignSimToExp(c.t_p1, c.p1, state.expRef.P1.t, state.expRef.P1.y);
+    chartP4.data.datasets[0].data = alignSimToExp(c.t_p4, c.p4, state.expRef.P4.t, state.expRef.P4.y);
   }
   syncPinnedDatasets(chartForce, 2, p => {
     const pc = state.curves[p.label];
@@ -507,11 +580,11 @@ function updateCharts(label) {
   });
   syncPinnedDatasets(chartP1, 2, p => {
     const pc = state.curves[p.label];
-    return pc ? onsetShiftedPoints(pc.t_p1, pc.p1, "sim") : null;
+    return pc ? alignSimToExp(pc.t_p1, pc.p1, state.expRef.P1.t, state.expRef.P1.y) : null;
   });
   syncPinnedDatasets(chartP4, 2, p => {
     const pc = state.curves[p.label];
-    return pc ? onsetShiftedPoints(pc.t_p4, pc.p4, "sim") : null;
+    return pc ? alignSimToExp(pc.t_p4, pc.p4, state.expRef.P4.t, state.expRef.P4.y) : null;
   });
 }
 
