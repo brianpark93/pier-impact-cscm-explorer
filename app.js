@@ -568,6 +568,15 @@ function syncPinnedDatasets(chart, nBase, buildData) {
 
 function updateCharts(label) {
   if (!chartForce) return;
+  // While comparing, hide the "current selection" curve itself -- showing
+  // it alongside every pinned case was confusing (user: "헷갈려"). Only
+  // the pinned cases + experiment stay visible; un-hides once the
+  // comparison list is cleared.
+  const comparing = state.pinned.length > 0;
+  chartForce.data.datasets[0].hidden = comparing;
+  chartP1.data.datasets[0].hidden = comparing;
+  chartP4.data.datasets[0].hidden = comparing;
+
   const c = state.curves[label];
   if (c) {
     chartForce.data.datasets[0].data = (c.t_force || []).map((t, i) => ({ x: t, y: c.force[i] }));
@@ -591,6 +600,7 @@ function updateCharts(label) {
 function updateYieldChart() {
   if (!chartYield) return;
   const row = state.params.cases[caseIndexFromSelection()];
+  chartYield.data.datasets[0].hidden = state.pinned.length > 0;
   chartYield.data.datasets[0].data = cscmYieldCurve(row.alpha, row.theta);
   chartYield.data.datasets[0].label = `current (alpha=${row.alpha}, theta=${row.theta})`;
   syncPinnedDatasets(chartYield, 2, p => {
