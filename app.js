@@ -71,10 +71,27 @@ function findOnset(t, v, frac = 0.03) {
   return t[0] || 0;
 }
 
-function onsetShiftedPoints(t, v) {
+// Baseline (zero-point) correction, additive-only, matches
+// report_best_vs_exp_cases.py's scheme (2026-08-31):
+//   sim: subtract v[0] -- the curve starts at t=0 already sitting at its
+//        real post-gravity static-sag rest position, so the first sample
+//        IS the correct physical zero.
+//   exp: subtract (max+min)/2 -- the digitized experimental curve has NO
+//        usable pre-impact sample at all (first digitized point is
+//        already mid-rise), so x[0] isn't available; for a symmetric
+//        damped oscillation about its rest position, the peak/trough
+//        midpoint recovers that rest position without needing a flat
+//        pre-event region.
+function onsetShiftedPoints(t, v, baselineMode) {
   if (!t || !t.length) return [];
   const onset = findOnset(t, v);
-  return t.map((tt, i) => ({ x: tt - onset, y: v[i] }));
+  let baseline = 0;
+  if (baselineMode === "sim") {
+    baseline = v[0];
+  } else if (baselineMode === "exp") {
+    baseline = (Math.max(...v) + Math.min(...v)) / 2;
+  }
+  return t.map((tt, i) => ({ x: tt - onset, y: v[i] - baseline }));
 }
 
 function buildToggles() {
@@ -405,7 +422,7 @@ let chartForce, chartP1, chartP4, chartYield;
 
 function makeChart(canvasId, yLabel, expT, expY, color, xMin, xMax, onsetShift) {
   const ctx = document.getElementById(canvasId).getContext("2d");
-  const expData = onsetShift ? onsetShiftedPoints(expT, expY) : expT.map((t, i) => ({ x: t, y: expY[i] }));
+  const expData = onsetShift ? onsetShiftedPoints(expT, expY, "exp") : expT.map((t, i) => ({ x: t, y: expY[i] }));
   return new Chart(ctx, {
     type: "line",
     data: {
@@ -481,8 +498,8 @@ function updateCharts(label) {
   const c = state.curves[label];
   if (c) {
     chartForce.data.datasets[0].data = (c.t_force || []).map((t, i) => ({ x: t, y: c.force[i] }));
-    chartP1.data.datasets[0].data = onsetShiftedPoints(c.t_p1, c.p1);
-    chartP4.data.datasets[0].data = onsetShiftedPoints(c.t_p4, c.p4);
+    chartP1.data.datasets[0].data = onsetShiftedPoints(c.t_p1, c.p1, "sim");
+    chartP4.data.datasets[0].data = onsetShiftedPoints(c.t_p4, c.p4, "sim");
   }
   syncPinnedDatasets(chartForce, 2, p => {
     const pc = state.curves[p.label];
@@ -490,11 +507,11 @@ function updateCharts(label) {
   });
   syncPinnedDatasets(chartP1, 2, p => {
     const pc = state.curves[p.label];
-    return pc ? onsetShiftedPoints(pc.t_p1, pc.p1) : null;
+    return pc ? onsetShiftedPoints(pc.t_p1, pc.p1, "sim") : null;
   });
   syncPinnedDatasets(chartP4, 2, p => {
     const pc = state.curves[p.label];
-    return pc ? onsetShiftedPoints(pc.t_p4, pc.p4) : null;
+    return pc ? onsetShiftedPoints(pc.t_p4, pc.p4, "sim") : null;
   });
 }
 
@@ -544,7 +561,7 @@ function onSelectionChanged() {
 // exp_ref/damage bytes and rebuild the toggles + exp-reference chart
 // datasets, not the Three.js scene itself.
 function setExpDataset(chart, expT, expY, onsetShift) {
-  chart.data.datasets[1].data = onsetShift ? onsetShiftedPoints(expT, expY) : expT.map((t, i) => ({ x: t, y: expY[i] }));
+  chart.data.datasets[1].data = onsetShift ? onsetShiftedPoints(expT, expY, "exp") : expT.map((t, i) => ({ x: t, y: expY[i] }));
 }
 
 async function loadTestData(testId) {
