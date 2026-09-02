@@ -171,17 +171,17 @@ function alignSimToExp(tSim, vSim, tExp, vExp, maxLag = 0.05) {
 // metrics_v2.force_metrics_v2's FORCE_XCORR_MAX_LAG_S=0.010s) -- no
 // baseline shift, since force's own offset is already negligible (user
 // 2026-08-31: "force의 경우 상관없는데... disp가 중요해").
-function alignForceSim(tSim, vSim, tExp, vExp, maxLag = 0.01) {
+function alignForceSim(tSim, vSim) {
+  // Plain onset-sync only (rise-past-3%-of-peak crossing) -- NO xcorr
+  // shape-correlation refinement here. User 2026-09-02: xcorr's best-fit
+  // lag tends to slide toward whatever maximizes overall shape/peak
+  // overlap, which can pull the alignment away from the actual rise
+  // point on this short, sharp pulse. Catching the rise itself is what
+  // matters for force, so onset-sync alone (matching P1/P4's own onset
+  // step, just without the extra lag search) is the right amount here.
   if (!tSim || !tSim.length) return [];
   const onsetSim = findOnset(tSim, vSim);
-  const tSimShifted = tSim.map(t => t - onsetSim);
-  if (!tExp || !tExp.length) {
-    return tSimShifted.map((t, i) => ({ x: t, y: vSim[i] }));
-  }
-  const onsetExp = findOnset(tExp, vExp);
-  const tExpShifted = tExp.map(t => t - onsetExp);
-  const { lag } = xcorrAlign(tExpShifted, vExp, tSimShifted, vSim, maxLag);
-  return tSimShifted.map((t, i) => ({ x: t + lag, y: vSim[i] }));
+  return tSim.map((t, i) => ({ x: t - onsetSim, y: vSim[i] }));
 }
 
 function buildToggles() {
@@ -600,13 +600,13 @@ function updateCharts(label) {
 
   const c = state.curves[label];
   if (c) {
-    chartForce.data.datasets[0].data = alignForceSim(c.t_force, c.force, state.expRef.force.t, state.expRef.force.y);
+    chartForce.data.datasets[0].data = alignForceSim(c.t_force, c.force);
     chartP1.data.datasets[0].data = alignSimToExp(c.t_p1, c.p1, state.expRef.P1.t, state.expRef.P1.y);
     chartP4.data.datasets[0].data = alignSimToExp(c.t_p4, c.p4, state.expRef.P4.t, state.expRef.P4.y);
   }
   syncPinnedDatasets(chartForce, 2, p => {
     const pc = state.curves[p.label];
-    return pc ? alignForceSim(pc.t_force, pc.force, state.expRef.force.t, state.expRef.force.y) : null;
+    return pc ? alignForceSim(pc.t_force, pc.force) : null;
   });
   syncPinnedDatasets(chartP1, 2, p => {
     const pc = state.curves[p.label];
