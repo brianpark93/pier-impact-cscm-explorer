@@ -167,6 +167,23 @@ function alignSimToExp(tSim, vSim, tExp, vExp, maxLag = 0.05) {
   return tSimShifted.map((t, i) => ({ x: t + lag, y: vSimZeroed[i] }));
 }
 
+// Force gets TIME-only sync (onset + xcorr lag, matching
+// metrics_v2.force_metrics_v2's FORCE_XCORR_MAX_LAG_S=0.010s) -- no
+// baseline shift, since force's own offset is already negligible (user
+// 2026-08-31: "force의 경우 상관없는데... disp가 중요해").
+function alignForceSim(tSim, vSim, tExp, vExp, maxLag = 0.01) {
+  if (!tSim || !tSim.length) return [];
+  const onsetSim = findOnset(tSim, vSim);
+  const tSimShifted = tSim.map(t => t - onsetSim);
+  if (!tExp || !tExp.length) {
+    return tSimShifted.map((t, i) => ({ x: t, y: vSim[i] }));
+  }
+  const onsetExp = findOnset(tExp, vExp);
+  const tExpShifted = tExp.map(t => t - onsetExp);
+  const { lag } = xcorrAlign(tExpShifted, vExp, tSimShifted, vSim, maxLag);
+  return tSimShifted.map((t, i) => ({ x: t + lag, y: vSim[i] }));
+}
+
 function buildToggles() {
   const container = document.getElementById("toggle-container");
   container.innerHTML = "";
@@ -493,9 +510,13 @@ function addCurrentToPinned() {
 // ---------- Chart.js curves ----------
 let chartForce, chartP1, chartP4, chartYield;
 
-function makeChart(canvasId, yLabel, expT, expY, color, xMin, xMax, onsetShift) {
+// alignMode: "none" (raw, absolute time -- unused now) | "time" (onset-sync
+// only, no baseline shift -- force) | "full" (onset-sync + baseline zero --
+// P1/P4).
+function makeChart(canvasId, yLabel, expT, expY, color, xMin, xMax, alignMode) {
   const ctx = document.getElementById(canvasId).getContext("2d");
-  const expData = onsetShift ? onsetShiftedPoints(expT, expY, "exp") : expT.map((t, i) => ({ x: t, y: expY[i] }));
+  const expData = alignMode === "none" ? expT.map((t, i) => ({ x: t, y: expY[i] }))
+    : onsetShiftedPoints(expT, expY, alignMode === "full" ? "exp" : "none");
   return new Chart(ctx, {
     type: "line",
     data: {
@@ -510,7 +531,7 @@ function makeChart(canvasId, yLabel, expT, expY, color, xMin, xMax, onsetShift) 
       maintainAspectRatio: false,
       parsing: false,
       scales: {
-        x: { type: "linear", min: xMin, max: xMax, title: { display: true, text: onsetShift ? "time since onset (s)" : "time (s)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
+        x: { type: "linear", min: xMin, max: xMax, title: { display: true, text: alignMode !== "none" ? "time since onset (s)" : "time (s)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
         y: { title: { display: true, text: yLabel, color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
       },
       plugins: { legend: { labels: { color: "#e8eaed", filter: (item, data) => !data.datasets[item.datasetIndex].hidden } } },
@@ -519,9 +540,9 @@ function makeChart(canvasId, yLabel, expT, expY, color, xMin, xMax, onsetShift) 
 }
 
 function initCharts() {
-  chartForce = makeChart("force-chart", "force (kN)", state.expRef.force.t, state.expRef.force.y, "#4f9dff", 0, 0.03, false);
-  chartP1 = makeChart("p1-chart", "P1 disp (mm)", state.expRef.P1.t, state.expRef.P1.y, "#4fd18b", -0.02, 0.2, true);
-  chartP4 = makeChart("p4-chart", "P4 disp (mm)", state.expRef.P4.t, state.expRef.P4.y, "#ff8a4f", -0.02, 0.2, true);
+  chartForce = makeChart("force-chart", "force (kN)", state.expRef.force.t, state.expRef.force.y, "#4f9dff", 0, 0.03, "time");
+  chartP1 = makeChart("p1-chart", "P1 disp (mm)", state.expRef.P1.t, state.expRef.P1.y, "#4fd18b", -0.02, 0.2, "full");
+  chartP4 = makeChart("p4-chart", "P4 disp (mm)", state.expRef.P4.t, state.expRef.P4.y, "#ff8a4f", -0.02, 0.2, "full");
 
   const yctx = document.getElementById("yield-chart").getContext("2d");
   chartYield = new Chart(yctx, {
@@ -579,13 +600,13 @@ function updateCharts(label) {
 
   const c = state.curves[label];
   if (c) {
-    chartForce.data.datasets[0].data = (c.t_force || []).map((t, i) => ({ x: t, y: c.force[i] }));
+    chartForce.data.datasets[0].data = alignForceSim(c.t_force, c.force, state.expRef.force.t, state.expRef.force.y);
     chartP1.data.datasets[0].data = alignSimToExp(c.t_p1, c.p1, state.expRef.P1.t, state.expRef.P1.y);
     chartP4.data.datasets[0].data = alignSimToExp(c.t_p4, c.p4, state.expRef.P4.t, state.expRef.P4.y);
   }
   syncPinnedDatasets(chartForce, 2, p => {
     const pc = state.curves[p.label];
-    return pc ? (pc.t_force || []).map((t, i) => ({ x: t, y: pc.force[i] })) : null;
+    return pc ? alignForceSim(pc.t_force, pc.force, state.expRef.force.t, state.expRef.force.y) : null;
   });
   syncPinnedDatasets(chartP1, 2, p => {
     const pc = state.curves[p.label];
@@ -643,8 +664,9 @@ function onSelectionChanged() {
 // mesh always) -- so switching tests only needs to swap params/curves/
 // exp_ref/damage bytes and rebuild the toggles + exp-reference chart
 // datasets, not the Three.js scene itself.
-function setExpDataset(chart, expT, expY, onsetShift) {
-  chart.data.datasets[1].data = onsetShift ? onsetShiftedPoints(expT, expY, "exp") : expT.map((t, i) => ({ x: t, y: expY[i] }));
+function setExpDataset(chart, expT, expY, alignMode) {
+  chart.data.datasets[1].data = alignMode === "none" ? expT.map((t, i) => ({ x: t, y: expY[i] }))
+    : onsetShiftedPoints(expT, expY, alignMode === "full" ? "exp" : "none");
 }
 
 async function loadTestData(testId) {
@@ -672,9 +694,9 @@ async function switchTest(testId) {
   buildToggles();
   renderPinnedList();
   if (chartForce) {
-    setExpDataset(chartForce, expRef.force.t, expRef.force.y, false);
-    setExpDataset(chartP1, expRef.P1.t, expRef.P1.y, true);
-    setExpDataset(chartP4, expRef.P4.t, expRef.P4.y, true);
+    setExpDataset(chartForce, expRef.force.t, expRef.force.y, "time");
+    setExpDataset(chartP1, expRef.P1.t, expRef.P1.y, "full");
+    setExpDataset(chartP4, expRef.P4.t, expRef.P4.y, "full");
   }
   onSelectionChanged();
 }
