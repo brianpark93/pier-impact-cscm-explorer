@@ -513,7 +513,7 @@ function makeChart(canvasId, yLabel, expT, expY, color, xMin, xMax, onsetShift) 
         x: { type: "linear", min: xMin, max: xMax, title: { display: true, text: onsetShift ? "time since onset (s)" : "time (s)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
         y: { title: { display: true, text: yLabel, color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
       },
-      plugins: { legend: { labels: { color: "#e8eaed" } } },
+      plugins: { legend: { labels: { color: "#e8eaed", filter: (item, data) => !data.datasets[item.datasetIndex].hidden } } },
     },
   });
 }
@@ -537,7 +537,7 @@ function initCharts() {
         y: { min: 0, max: YIELD_Y_MAX, title: { display: true, text: "sqrt(J2) (MPa)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
       },
       plugins: {
-        legend: { labels: { color: "#e8eaed" } },
+        legend: { labels: { color: "#e8eaed", filter: (item, data) => !data.datasets[item.datasetIndex].hidden } },
         zoom: {
           // y is sqrt(J2) -- never negative and always shown fixed at
           // [0, YIELD_Y_MAX], so only J1 (x) is pannable/zoomable. Locking
