@@ -38,18 +38,29 @@ async function loadBinary(path) {
   return new Uint8Array(buf);
 }
 
-function caseIndexFromSelection() {
-  const names = state.params.param_names;
-  let idx = 0;
-  for (const name of names) {
-    const nLevels = state.params.levels[name].length;
-    idx = idx * nLevels + state.selected[name];
-  }
-  return idx;
+// 2026-09-04: the dataset is no longer a dense grid -- the 5-level
+// original cube (3125 cases) and the 4-level midpoints cube (1024 cases)
+// are each internally dense, but together they only cover ~4149 of the
+// 9^5=59049 possible combinations (a full 9-level grid was never run --
+// infeasible). So the case for a given toggle selection must be found by
+// exact param-value lookup, not flat-index arithmetic; most combinations
+// simply have no data, and callers must handle that (idx === null).
+function comboKey(theta, alpha, E_MPA, GFC, GFT) {
+  return [theta, alpha, E_MPA, GFC, GFT].map(v => Number(v).toFixed(6)).join("|");
 }
 
-function caseLabel(idx) {
-  return "case_" + String(idx).padStart(4, "0");
+function buildCaseIndex() {
+  state.caseByKey = new Map();
+  state.params.cases.forEach((row, i) => {
+    state.caseByKey.set(comboKey(row.theta, row.alpha, row.E_MPA, row.GFC, row.GFT), i);
+  });
+}
+
+function caseIndexFromSelection() {
+  const names = state.params.param_names;
+  const vals = names.map(name => state.params.levels[name][state.selected[name]]);
+  const key = comboKey(...vals);
+  return state.caseByKey.has(key) ? state.caseByKey.get(key) : null;
 }
 
 function paramSummary(row) {
@@ -352,7 +363,7 @@ function faceColorArray(caseIdx, nFaces, out) {
 }
 
 function updateDamageColors(caseIdx) {
-  if (!threeReady) return;
+  if (!threeReady || caseIdx === null) return; // leave last-rendered damage showing; see the "not sampled" text overlay instead
   faceColorArray(caseIdx, state.params.n_faces, colorAttr.array);
   colorAttr.needsUpdate = true;
 }
@@ -428,7 +439,9 @@ function renderDamageComparisons() {
   const comparing = state.pinned.length > 0;
   if (!comparing) return;
   const curIdx = caseIndexFromSelection();
-  addThumbTo(row, curIdx, `${caseLabel(curIdx)} (current)`, "#4f9dff", true);
+  if (curIdx !== null) {
+    addThumbTo(row, curIdx, `${state.params.cases[curIdx].label} (current)`, "#4f9dff", true);
+  }
   state.pinned.forEach(p => addThumbTo(row, p.idx, p.label, p.color, true));
 }
 
@@ -479,7 +492,7 @@ function renderPinnedList() {
     chip.appendChild(dot);
     const row = state.params.cases[p.idx];
     const txt = document.createElement("span");
-    const scoreTxt = row && row.combined_score !== undefined ? ` (combined ${row.combined_score.toFixed(1)})` : "";
+    const scoreTxt = row && row.combined_v2 !== undefined ? ` (combined ${row.combined_v2.toFixed(1)})` : "";
     txt.textContent = `${p.label}${scoreTxt} -- ${paramSummary(row)}`;
     chip.appendChild(txt);
     const rm = document.createElement("button");
@@ -496,11 +509,12 @@ function renderPinnedList() {
 
 function addCurrentToPinned() {
   const idx = caseIndexFromSelection();
+  if (idx === null) return; // current combo has no data -- nothing to pin
   if (state.pinned.some(p => p.idx === idx)) return;
   if (state.pinned.length >= PIN_COLORS.length) {
     state.pinned.shift();
   }
-  state.pinned.push({ idx, label: caseLabel(idx), color: pinColorFor(state.pinned.length) });
+  state.pinned.push({ idx, label: state.params.cases[idx].label, color: pinColorFor(state.pinned.length) });
   // recolor sequentially so chip colors always match chart line colors
   state.pinned.forEach((p, i) => { p.color = pinColorFor(i); });
   renderPinnedList();
@@ -587,18 +601,19 @@ function syncPinnedDatasets(chart, nBase, buildData) {
   chart.update();
 }
 
-function updateCharts(label) {
+function updateCharts(idx) {
   if (!chartForce) return;
   // While comparing, hide the "current selection" curve itself -- showing
   // it alongside every pinned case was confusing (user: "헷갈려"). Only
   // the pinned cases + experiment stay visible; un-hides once the
-  // comparison list is cleared.
+  // comparison list is cleared. Also hidden when the current combo has no
+  // data at all (idx === null).
   const comparing = state.pinned.length > 0;
-  chartForce.data.datasets[0].hidden = comparing;
-  chartP1.data.datasets[0].hidden = comparing;
-  chartP4.data.datasets[0].hidden = comparing;
+  chartForce.data.datasets[0].hidden = comparing || idx === null;
+  chartP1.data.datasets[0].hidden = comparing || idx === null;
+  chartP4.data.datasets[0].hidden = comparing || idx === null;
 
-  const c = state.curves[label];
+  const c = idx === null ? null : state.curves[state.params.cases[idx].label];
   if (c) {
     chartForce.data.datasets[0].data = alignForceSim(c.t_force, c.force);
     chartP1.data.datasets[0].data = alignSimToExp(c.t_p1, c.p1, state.expRef.P1.t, state.expRef.P1.y);
@@ -618,12 +633,16 @@ function updateCharts(label) {
   });
 }
 
+// The yield surface is a pure function of the SELECTED alpha/theta level
+// values, not tied to whether a simulated case exists for the full combo
+// -- so it always renders, even for a "not sampled" combination.
 function updateYieldChart() {
   if (!chartYield) return;
-  const row = state.params.cases[caseIndexFromSelection()];
+  const theta = state.params.levels.theta[state.selected.theta];
+  const alpha = state.params.levels.alpha[state.selected.alpha];
   chartYield.data.datasets[0].hidden = state.pinned.length > 0;
-  chartYield.data.datasets[0].data = cscmYieldCurve(row.alpha, row.theta);
-  chartYield.data.datasets[0].label = `current (alpha=${row.alpha}, theta=${row.theta})`;
+  chartYield.data.datasets[0].data = cscmYieldCurve(alpha, theta);
+  chartYield.data.datasets[0].label = `current (alpha=${alpha}, theta=${theta})`;
   syncPinnedDatasets(chartYield, 2, p => {
     const r = state.params.cases[p.idx];
     return cscmYieldCurve(r.alpha, r.theta);
@@ -631,7 +650,7 @@ function updateYieldChart() {
 }
 
 function refreshAllCharts() {
-  updateCharts(caseLabel(caseIndexFromSelection()));
+  updateCharts(caseIndexFromSelection());
   updateYieldChart();
   renderDamageComparisons();
   updateMainViewLockState();
@@ -643,19 +662,30 @@ function fmtPct(v) {
 
 function onSelectionChanged() {
   const idx = caseIndexFromSelection();
-  const label = caseLabel(idx);
-  document.getElementById("case-label").textContent = label;
-  const row = state.params.cases[idx];
+  const pinBtn = document.getElementById("pin-btn");
   const metricsEl = document.getElementById("case-metrics");
-  if (row && row.force_rmse_pct !== undefined) {
-    metricsEl.textContent = `force RMSE ${fmtPct(row.force_rmse_pct)} | P1 RMSE ${fmtPct(row.P1_rmse_pct)} | P4 RMSE ${fmtPct(row.P4_rmse_pct)} | combined ${row.combined_score !== undefined ? row.combined_score.toFixed(1) : "--"}`;
-  } else if (row && (row.dmg_ok === false || row.curve_ok === false)) {
-    metricsEl.textContent = "(this case failed / no data)";
+  const noDataEl = document.getElementById("damage-no-data");
+  if (idx === null) {
+    document.getElementById("case-label").textContent = "(not sampled)";
+    metricsEl.textContent = "이 파라미터 조합은 시뮬레이션되지 않았어요 -- 다른 값을 선택해보세요.";
+    if (pinBtn) pinBtn.disabled = true;
+    if (noDataEl) noDataEl.style.display = "";
   } else {
-    metricsEl.textContent = "";
+    if (pinBtn) pinBtn.disabled = false;
+    if (noDataEl) noDataEl.style.display = "none";
+    const row = state.params.cases[idx];
+    document.getElementById("case-label").textContent = row.label;
+    if (row.force_rmse_pct !== undefined) {
+      const combinedTxt = row.combined_v2 !== undefined ? row.combined_v2.toFixed(1) : "--";
+      metricsEl.textContent = `force RMSE ${fmtPct(row.force_rmse_pct)} | P1 peak ${fmtPct(row.P1_peak_pct)} | P4 peak ${fmtPct(row.P4_peak_pct)} | combined ${combinedTxt}`;
+    } else if (row.dmg_ok === false || row.curve_ok === false) {
+      metricsEl.textContent = "(this case failed / no data)";
+    } else {
+      metricsEl.textContent = "";
+    }
   }
   updateDamageColors(idx);
-  updateCharts(label);
+  updateCharts(idx);
   updateYieldChart();
   renderDamageComparisons(); // no-op unless comparing -- keeps the live "current" thumbnail in sync with toggles
 }
@@ -689,7 +719,8 @@ async function switchTest(testId) {
   state.damageBytes = damageBytes;
   state.curves = curves;
   state.pinned = [];
-  params.param_names.forEach(name => { state.selected[name] = 2; });
+  buildCaseIndex();
+  params.param_names.forEach(name => { state.selected[name] = Math.floor(params.levels[name].length / 2); });
 
   buildToggles();
   renderPinnedList();
@@ -710,8 +741,9 @@ async function main() {
   state.expRef = expRef;
   state.damageBytes = damageBytes;
   state.curves = curves;
+  buildCaseIndex();
 
-  params.param_names.forEach(name => { state.selected[name] = 2; }); // default: middle level of each
+  params.param_names.forEach(name => { state.selected[name] = Math.floor(params.levels[name].length / 2); }); // default: middle level of each
 
   buildToggles();
   document.getElementById("pin-btn").addEventListener("click", addCurrentToPinned);

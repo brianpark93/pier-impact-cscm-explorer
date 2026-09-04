@@ -155,6 +155,34 @@ main {
 
 #pin-btn:hover { filter: brightness(1.08); }
 
+#pin-btn:disabled {
+  background: #2a313b;
+  color: var(--text-muted);
+  cursor: not-allowed;
+  filter: none;
+}
+
+#damage-no-data {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+  background: rgba(5, 7, 10, 0.55);
+  pointer-events: none;
+}
+
+#damage-no-data span {
+  margin-top: 6px;
+  font-size: 0.78rem;
+  font-weight: 400;
+}
+
 #pinned-list {
   margin-top: 10px;
   display: flex;
