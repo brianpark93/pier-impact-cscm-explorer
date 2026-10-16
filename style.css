@@ -327,7 +327,13 @@ main {
 /* ---------------------------------------------------------------- charts */
 .chart-grid { display: grid; gap: 20px; }
 .chart-grid > div { min-width: 0; }
-.chart-grid canvas { width: 100%; height: 190px; }
+
+/* Chart.js with maintainAspectRatio:false measures the canvas's PARENT. If
+   that parent is sized by its content the two chase each other and the chart
+   grows without bound on every frame, which is what a canvas left to size
+   itself here did. The box below is the fixed thing it measures against. */
+.chart-box { position: relative; height: 200px; width: 100%; }
+.chart-box canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
 
 /* ----------------------------------------------------------------- table */
 #calib-table { margin-top: 18px; overflow-x: auto; }

@@ -11,7 +11,12 @@
  * than its own file.
  */
 
-const PIER_R = 500, PIER_H = 4840, IMPACT_Z = 2000;
+// Measured off the model, not assumed: the impactor nose (solid part 4)
+// spans z = 1365..1635 mm with its face at x = +505, so the strike is at
+// z = 1500 on the +x side, on the y = 0 centreline. An earlier value of 2000
+// here drew the arrow half a metre above where the pier is actually hit.
+const PIER_R = 500, PIER_H = 4840;
+const IMPACT_Z = 1500, IMPACT_FACE_X = 505;
 
 const SERIES = ["#0071e3", "#ff375f", "#30a46c", "#f5a524", "#8e4ec6",
                 "#0ea5b7", "#e8590c", "#5b6b7c", "#b5179e"];
@@ -70,11 +75,13 @@ class PierView {
     this.controls.target.set(0, PIER_H * 0.5, 0);
     this.controls.addEventListener("change", () => this.requestRender());
 
-    const arrowLen = PIER_R * 1.5;
+    // Starts clear of the pier and ends on the impactor's contact face, so
+    // the head lands where the strike happens rather than inside the column.
+    const arrowLen = PIER_R * 1.6;
     const arrow = new THREE.ArrowHelper(
       new THREE.Vector3(-1, 0, 0),
-      new THREE.Vector3(PIER_R + arrowLen, IMPACT_Z, 0),
-      arrowLen, 0xff3b30, arrowLen * 0.3, arrowLen * 0.18);
+      new THREE.Vector3(IMPACT_FACE_X + arrowLen, IMPACT_Z, 0),
+      arrowLen, 0xff3b30, arrowLen * 0.26, arrowLen * 0.15);
     this.scene.add(arrow);
 
     this.resize();
@@ -332,6 +339,19 @@ const PARAM_LABEL = { alpha: "α", theta: "θ", lamda: "λ",
 
 const ofat = { sel: null, charts: {} };
 
+/** The value this row's parameter actually takes at this multiple.
+ *
+ *  Computed from the row's own default rather than read off the case, because
+ *  the default column is one shared solve: its stored value belongs to
+ *  whichever row happened to export it, not to the row being drawn.
+ */
+function ofatValue(layout, param, mult) {
+  const base = layout.defaults?.[param];
+  if (base === undefined) return "";
+  const u = layout.units?.[param] ?? { scale: 1, dp: 3, unit: "" };
+  return (base * mult * u.scale).toFixed(u.dp) + u.unit;
+}
+
 async function initOfat() {
   const g = await loadGroup("ofat", ["layout.json"]);
   const { rows, cols, cells } = g.layout;
@@ -360,7 +380,9 @@ async function initOfat() {
         b.textContent = "—";
         b.title = "Inadmissible: CSCM requires alpha > lamda";
       } else {
-        b.textContent = c === 1 ? "default" : `×${c}`;
+        // The column heading already carries the multiplier, so the cell
+        // carries the number the multiplier produces.
+        b.textContent = ofatValue(g.layout, p, c);
         b.dataset.label = label;
         b.dataset.param = p;
         b.dataset.mult = c;
@@ -388,9 +410,12 @@ async function selectOfat(btn) {
 
   const mult = +btn.dataset.mult;
   const p = btn.dataset.param;
+  // `base` is already the default CURVE in this scope; these are values.
+  const shownVal = ofatValue(g.layout, p, mult);
+  const baseVal = ofatValue(g.layout, p, 1);
   $("#ofat-note").textContent = mult === 1
-    ? "All five parameters at their auto-generated CSCM default."
-    : `${PARAM_LABEL[p] || p} at ${mult}× its default; every other parameter unchanged.`;
+    ? `All five parameters at their auto-generated CSCM default (${PARAM_LABEL[p] || p} = ${baseVal}).`
+    : `${PARAM_LABEL[p] || p} = ${shownVal}, i.e. ${mult}× its default of ${baseVal}; every other parameter unchanged.`;
 
   const spec = [["force", "force", "t_force", false],
                 ["p1", "p1", "t_p1", true],
