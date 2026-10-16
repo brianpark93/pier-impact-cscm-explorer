@@ -1,762 +1,625 @@
-/* Test1 5^5 factorial explorer -- static site, no backend.
- * Data layout (data/):
- *   params.json   -- {levels: {theta:[...], alpha:[...], ...}, param_names: [...],
- *                      cases: [{theta, alpha, E_MPA, GFC, GFT, label, dmg_ok,
- *                               curve_ok, force_rmse_pct?, P1_rmse_pct?, ...}, ...],
- *                      n_faces: int}
- *   mesh.json     -- {verts: [[x,y,z],...], faces: [[v0,v1,v2,v3],...]}  (shared, identical every case)
- *   damage_all.bin-- Uint8, n_cases * n_faces bytes, one n_faces block per case in manifest order
- *   curves.json   -- {case_label: {t_force, force, t_p1, p1, t_p4, p4}}
- *   exp_ref.json  -- {force: {t,y}, P1: {t,y}, P4: {t,y}}  (digitized experimental reference)
+/* RC Pier Impact -- CSCM Explorer
+ *
+ * Three views over three exported datasets (see export_site_data_v2.py):
+ *   ofat   one parameter moved at a time about the CSCM default
+ *   mesh   nine refinement levels at the default
+ *   calib  the adopted sets against the measurements
+ *
+ * Geometry arrives as binary rather than JSON: float32 vertices and uint32
+ * faces, surface only and re-indexed. The damage field is one uint8 per face
+ * per case, concatenated, which is why a case carries a slot index rather
+ * than its own file.
  */
 
-const PARAM_UNITS = {
-  theta: { label: "theta", fmt: v => v.toFixed(3) },
-  alpha: { label: "alpha", fmt: v => v.toFixed(1) },
-  E_MPA: { label: "E (GPa)", fmt: v => (v / 1000).toFixed(2) },
-  GFC: { label: "GFC (MPa)", fmt: v => v.toFixed(2) },
-  GFT: { label: "GFT (MPa)", fmt: v => v.toFixed(4) },
-};
+const PIER_R = 500, PIER_H = 4840, IMPACT_Z = 2000;
 
-let state = {
-  params: null,
-  mesh: null,
-  damageBytes: null,
-  curves: null,
-  expRef: null,
-  selected: {}, // param -> level index
-};
+const SERIES = ["#0071e3", "#ff375f", "#30a46c", "#f5a524", "#8e4ec6",
+                "#0ea5b7", "#e8590c", "#5b6b7c", "#b5179e"];
 
-async function loadJSON(path) {
-  const r = await fetch(path);
+const DEFAULT_GREY = "#b9b9c0";
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+async function getJSON(p) {
+  const r = await fetch(p);
+  if (!r.ok) throw new Error(`${p}: ${r.status}`);
   return r.json();
 }
 
-async function loadBinary(path) {
-  const r = await fetch(path);
-  const buf = await r.arrayBuffer();
-  return new Uint8Array(buf);
+async function getBuffer(p) {
+  const r = await fetch(p);
+  if (!r.ok) throw new Error(`${p}: ${r.status}`);
+  return r.arrayBuffer();
 }
 
-// 2026-09-04: the dataset is no longer a dense grid -- the 5-level
-// original cube (3125 cases) and the 4-level midpoints cube (1024 cases)
-// are each internally dense, but together they only cover ~4149 of the
-// 9^5=59049 possible combinations (a full 9-level grid was never run --
-// infeasible). So the case for a given toggle selection must be found by
-// exact param-value lookup, not flat-index arithmetic; most combinations
-// simply have no data, and callers must handle that (idx === null).
-function comboKey(theta, alpha, E_MPA, GFC, GFT) {
-  return [theta, alpha, E_MPA, GFC, GFT].map(v => Number(v).toFixed(6)).join("|");
+/* ------------------------------------------------------------------ three */
+let THREE, OrbitControls;
+
+async function loadThree() {
+  if (THREE) return;
+  THREE = await import("three");
+  ({ OrbitControls } = await import("three/addons/controls/OrbitControls.js"));
 }
 
-function buildCaseIndex() {
-  state.caseByKey = new Map();
-  state.params.cases.forEach((row, i) => {
-    state.caseByKey.set(comboKey(row.theta, row.alpha, row.E_MPA, row.GFC, row.GFT), i);
-  });
-}
-
-function caseIndexFromSelection() {
-  const names = state.params.param_names;
-  const vals = names.map(name => state.params.levels[name][state.selected[name]]);
-  const key = comboKey(...vals);
-  return state.caseByKey.has(key) ? state.caseByKey.get(key) : null;
-}
-
-function paramSummary(row) {
-  if (!row) return "";
-  return `θ${row.theta.toFixed(3)} α${row.alpha.toFixed(1)} E${(row.E_MPA / 1000).toFixed(1)} GFC${row.GFC.toFixed(1)} GFT${row.GFT.toFixed(3)}`;
-}
-
-// Onset-sync alignment (additive shift only, never a scale factor -- see
-// project convention in sweep_plotting.find_onset/shift): each curve is
-// independently shifted so the instant it first crosses `frac` of its own
-// peak lands at t=0. Applied to P1/P4 only (not force), per user request.
-function findOnset(t, v, frac = 0.03) {
-  const peak = Math.max(...v);
-  if (!(peak > 0)) return t[0] || 0;
-  const thresh = frac * peak;
-  for (let i = 0; i < t.length; i++) {
-    if (v[i] >= thresh) return t[i];
+/** One self-contained 3D pier view bound to a canvas. */
+class PierView {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ready = false;
+    this.meshKey = null;
   }
-  return t[0] || 0;
-}
 
-// Baseline (zero-point) correction, additive-only, matches
-// report_best_vs_exp_cases.py's scheme (2026-08-31):
-//   sim: subtract v[0] -- the curve starts at t=0 already sitting at its
-//        real post-gravity static-sag rest position, so the first sample
-//        IS the correct physical zero.
-//   exp: subtract (max+min)/2 -- the digitized experimental curve has NO
-//        usable pre-impact sample at all (first digitized point is
-//        already mid-rise), so x[0] isn't available; for a symmetric
-//        damped oscillation about its rest position, the peak/trough
-//        midpoint recovers that rest position without needing a flat
-//        pre-event region.
-function onsetShiftedPoints(t, v, baselineMode) {
-  if (!t || !t.length) return [];
-  const onset = findOnset(t, v);
-  let baseline = 0;
-  if (baselineMode === "sim") {
-    baseline = v[0];
-  } else if (baselineMode === "exp") {
-    baseline = (Math.max(...v) + Math.min(...v)) / 2;
+  async init() {
+    await loadThree();
+    const wrap = this.canvas.parentElement;
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: true });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(42, 1, 1, 100000);
+
+    // Three treats Y as up; the model has Z up, so vertices are swapped on
+    // load (x, z, y) rather than rotating the whole scene.
+    this.camera.position.set(PIER_R * 8, PIER_H * 0.5, PIER_R * 8);
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    // Damping is off on purpose. It only advances while update() is being
+    // called, so it forces a permanent rAF loop; without it the scene can be
+    // drawn on demand, which keeps the page idle when nobody is dragging it
+    // (and lets a headless browser settle enough to screenshot the page).
+    this.controls.enableDamping = false;
+    this.controls.target.set(0, PIER_H * 0.5, 0);
+    this.controls.addEventListener("change", () => this.requestRender());
+
+    const arrowLen = PIER_R * 1.5;
+    const arrow = new THREE.ArrowHelper(
+      new THREE.Vector3(-1, 0, 0),
+      new THREE.Vector3(PIER_R + arrowLen, IMPACT_Z, 0),
+      arrowLen, 0xff3b30, arrowLen * 0.3, arrowLen * 0.18);
+    this.scene.add(arrow);
+
+    this.resize();
+    new ResizeObserver(() => this.resize()).observe(wrap);
+    this.ready = true;
+    this.requestRender();
   }
-  return t.map((tt, i) => ({ x: tt - onset, y: v[i] - baseline }));
-}
 
-// Linear interpolation with out-of-range -> null (matches np.interp's
-// left=np.nan, right=np.nan used by sweep_plotting.xcorr_align). Assumes
-// xs is sorted ascending.
-function interpNullOutside(x, xs, ys) {
-  if (x < xs[0] || x > xs[xs.length - 1]) return null;
-  let i = 0;
-  while (i < xs.length - 1 && xs[i + 1] < x) i++;
-  const x0 = xs[i], x1 = xs[i + 1], y0 = ys[i], y1 = ys[i + 1];
-  if (x1 === x0) return y0;
-  return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
-}
-
-function pearsonCorr(a, b) {
-  const n = a.length;
-  const meanA = a.reduce((s, v) => s + v, 0) / n;
-  const meanB = b.reduce((s, v) => s + v, 0) / n;
-  let num = 0, denA = 0, denB = 0;
-  for (let i = 0; i < n; i++) {
-    const da = a[i] - meanA, db = b[i] - meanB;
-    num += da * db; denA += da * da; denB += db * db;
+  resize() {
+    const wrap = this.canvas.parentElement;
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h) return;
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+    if (this.fitted) this.fitView();
+    this.requestRender();
   }
-  const den = Math.sqrt(denA * denB);
-  return den > 0 ? num / den : 0;
-}
 
-// Port of sweep_plotting.xcorr_align (2026-07-23 project convention): the
-// extra TIME-only lag (beyond onset-sync) that best matches target's SHAPE
-// against ref, by grid-searching lag and maximizing Pearson correlation
-// (scale-invariant, so amplitude mismatches don't bias the search). Never
-// applies a scale factor -- shift only.
-function xcorrAlign(tRef, vRef, tTarget, vTarget, maxLag = 0.05, nGrid = 600, nLags = 101) {
-  const tMin = Math.max(tRef[0], tTarget[0] - maxLag);
-  const tMax = Math.min(tRef[tRef.length - 1], tTarget[tTarget.length - 1] + maxLag);
-  if (tMax <= tMin) return { lag: 0, corr: 0 };
-  const grid = [];
-  for (let i = 0; i < nGrid; i++) grid.push(tMin + (tMax - tMin) * i / (nGrid - 1));
-  const refG = grid.map(g => interpNullOutside(g, tRef, vRef));
-  let bestLag = 0, bestCorr = -Infinity;
-  for (let li = 0; li < nLags; li++) {
-    const lag = -maxLag + (2 * maxLag) * li / (nLags - 1);
-    const shiftedT = tTarget.map(t => t + lag);
-    const pairsA = [], pairsB = [];
-    for (let i = 0; i < grid.length; i++) {
-      const tg = interpNullOutside(grid[i], shiftedT, vTarget);
-      if (refG[i] !== null && tg !== null) { pairsA.push(refG[i]); pairsB.push(tg); }
-    }
-    if (pairsA.length < grid.length / 4) continue;
-    const corr = pearsonCorr(pairsA, pairsB);
-    if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
+  /** Pull the camera back far enough that the whole model is in frame.
+   *
+   *  Fitted to the geometry's own bounding box, not to the nominal pier
+   *  dimensions: the box also has to cover the impact arrow, and the mesh
+   *  levels do not all end at exactly the same extent. Done from the aspect
+   *  ratio too, since the panel is portrait on a desktop and nearly square
+   *  on a phone.
+   */
+  fitView() {
+    const b = this.bbox;
+    if (!b) return;
+    this.controls.target.set(b.cx, b.cy, b.cz);
+    const halfH = b.hy * 1.14;
+    const halfW = Math.max(b.hx, b.hz) * 1.3;
+    const vFov = (this.camera.fov * Math.PI) / 180;
+    const dV = halfH / Math.tan(vFov / 2);
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect);
+    const dH = halfW / Math.tan(hFov / 2);
+    const d = Math.max(dV, dH);
+    const t = this.controls.target;
+    const dir = this.camera.position.clone().sub(t).normalize();
+    this.camera.position.copy(t).add(dir.multiplyScalar(d));
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+    this.fitted = true;
+    this.requestRender();
   }
-  return { lag: bestLag, corr: bestCorr };
-}
 
-// Full sim-curve alignment against an exp reference: onset-sync + baseline-
-// zero (both sim/exp per their own scheme above) + the extra xcorr lag
-// refinement on top, mirroring report_best_vs_exp_cases.py exactly. Used
-// for every sim P1/P4 dataset (current selection + each pinned case).
-function alignSimToExp(tSim, vSim, tExp, vExp, maxLag = 0.05) {
-  if (!tSim || !tSim.length) return [];
-  const onsetSim = findOnset(tSim, vSim);
-  const tSimShifted = tSim.map(t => t - onsetSim);
-  const vSimZeroed = vSim.map(v => v - vSim[0]);
-  if (!tExp || !tExp.length) {
-    return tSimShifted.map((t, i) => ({ x: t, y: vSimZeroed[i] }));
-  }
-  const onsetExp = findOnset(tExp, vExp);
-  const tExpShifted = tExp.map(t => t - onsetExp);
-  const baselineExp = (Math.max(...vExp) + Math.min(...vExp)) / 2;
-  const vExpZeroed = vExp.map(v => v - baselineExp);
-  const { lag } = xcorrAlign(tExpShifted, vExpZeroed, tSimShifted, vSimZeroed, maxLag);
-  return tSimShifted.map((t, i) => ({ x: t + lag, y: vSimZeroed[i] }));
-}
-
-// Force gets TIME-only sync (onset + xcorr lag, matching
-// metrics_v2.force_metrics_v2's FORCE_XCORR_MAX_LAG_S=0.010s) -- no
-// baseline shift, since force's own offset is already negligible (user
-// 2026-08-31: "force의 경우 상관없는데... disp가 중요해").
-function alignForceSim(tSim, vSim) {
-  // Plain onset-sync only (rise-past-3%-of-peak crossing) -- NO xcorr
-  // shape-correlation refinement here. User 2026-09-02: xcorr's best-fit
-  // lag tends to slide toward whatever maximizes overall shape/peak
-  // overlap, which can pull the alignment away from the actual rise
-  // point on this short, sharp pulse. Catching the rise itself is what
-  // matters for force, so onset-sync alone (matching P1/P4's own onset
-  // step, just without the extra lag search) is the right amount here.
-  if (!tSim || !tSim.length) return [];
-  const onsetSim = findOnset(tSim, vSim);
-  return tSim.map((t, i) => ({ x: t - onsetSim, y: vSim[i] }));
-}
-
-function buildToggles() {
-  const container = document.getElementById("toggle-container");
-  container.innerHTML = "";
-  const names = state.params.param_names;
-  names.forEach(name => {
-    const levels = state.params.levels[name];
-    const meta = PARAM_UNITS[name] || { label: name, fmt: v => v };
-    const wrap = document.createElement("div");
-    wrap.className = "toggle";
-    const lbl = document.createElement("label");
-    lbl.textContent = meta.label;
-    wrap.appendChild(lbl);
-    const scroll = document.createElement("div");
-    scroll.className = "toggle-scroll";
-    levels.forEach((val, i) => {
-      const btn = document.createElement("button");
-      btn.textContent = meta.fmt(val);
-      btn.dataset.param = name;
-      btn.dataset.idx = i;
-      if (i === state.selected[name]) btn.classList.add("active");
-      btn.addEventListener("click", () => {
-        state.selected[name] = i;
-        [...scroll.children].forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-        onSelectionChanged();
-      });
-      scroll.appendChild(btn);
+  /** Draw once on the next frame; repeated calls in a frame collapse. */
+  requestRender() {
+    if (!this.ready || this.pending) return;
+    this.pending = true;
+    requestAnimationFrame(() => {
+      this.pending = false;
+      this.controls.update();
+      this.renderer.render(this.scene, this.camera);
     });
-    wrap.appendChild(scroll);
-    container.appendChild(wrap);
-  });
-}
-
-// ---------- Three.js damage viewer ----------
-let renderer, scene, camera, controls, mesh3d, colorAttr, THREE, OrbitControlsClass, threeReady = false;
-
-async function initThree() {
-  const wrap = document.getElementById("damage-canvas-wrap");
-  const canvas = document.getElementById("damage-canvas");
-  try {
-    THREE = await import("three");
-    ({ OrbitControls: OrbitControlsClass } = await import("three/addons/controls/OrbitControls.js"));
-  } catch (e) {
-    console.error("Three.js failed to load", e);
-    wrap.innerHTML = '<p style="color:#ff8a4f;padding:16px;">3D damage viewer failed to load. Force/P1/P4 curves below still work.</p>';
-    return;
   }
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  renderer.setPixelRatio(window.devicePixelRatio || 1);
-  renderer.setSize(wrap.clientWidth, wrap.clientHeight);
-  renderer.setClearColor(0x000000, 0);
 
-  scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(45, wrap.clientWidth / wrap.clientHeight, 1, 100000);
-
-  // The pier's tall axis is Z in the source data (0..~4840mm), but
-  // Three.js/OrbitControls treat Y as "up" by default -- swap Y/Z here so
-  // the pier renders upright instead of lying on its side.
-  const { verts, faces } = state.mesh;
-  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity, zmin = Infinity, zmax = -Infinity;
-  for (const [x, y, z] of verts) {
-    if (x < xmin) xmin = x; if (x > xmax) xmax = x;
-    if (z < ymin) ymin = z; if (z > ymax) ymax = z;
-    if (y < zmin) zmin = y; if (y > zmax) zmax = y;
-  }
-  const cx = (xmin + xmax) / 2, cy = (ymin + ymax) / 2, cz = (zmin + zmax) / 2;
-  const diag = Math.sqrt((xmax - xmin) ** 2 + (ymax - ymin) ** 2 + (zmax - zmin) ** 2);
-
-  // triangulate each quad face (0,1,2) + (0,2,3), non-indexed so we can
-  // flat-color per triangle-pair (= per original quad face)
-  const nFaces = faces.length;
-  const positions = new Float32Array(nFaces * 6 * 3);
-  let p = 0;
-  for (const f of faces) {
-    const quad = [verts[f[0]], verts[f[1]], verts[f[2]], verts[f[3]]];
-    const tri = [quad[0], quad[1], quad[2], quad[0], quad[2], quad[3]];
-    for (const v of tri) {
-      positions[p++] = v[0]; positions[p++] = v[2]; positions[p++] = v[1];
+  /** geom: {verts: Float32Array, faces: Uint32Array} already surface-only. */
+  setGeometry(key, geom) {
+    if (this.meshKey === key) return;
+    this.meshKey = key;
+    if (this.mesh) {
+      this.scene.remove(this.mesh);
+      this.mesh.geometry.dispose();
+      this.mesh.material.dispose();
     }
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  const colors = new Float32Array(nFaces * 6 * 3);
-  colorAttr = new THREE.BufferAttribute(colors, 3);
-  geo.setAttribute("color", colorAttr);
-  geo.computeVertexNormals();
-
-  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
-  mesh3d = new THREE.Mesh(geo, mat);
-  scene.add(mesh3d);
-
-  // Impact arrow: impactor strikes the pier's +X face (PIER_R=500mm) at
-  // Y=0 (centerline), Z=1500mm (IMPACT_HEIGHT, see generate_impactor.py),
-  // travelling in -X (initial_velocity vx=-3170). Kept short (~5% of the
-  // model diagonal) so it marks the impact point/direction without
-  // burying the pier itself.
-  const IMPACT_X = 500, IMPACT_Y = 0, IMPACT_Z = 1500;
-  const arrowLen = Math.max(320, diag * 0.09);
-  const arrowOrigin = new THREE.Vector3(IMPACT_X + arrowLen, IMPACT_Z, IMPACT_Y); // remapped (x,z,y)
-  const arrowDir = new THREE.Vector3(-1, 0, 0);
-  const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLen, 0xff2d2d, arrowLen * 0.32, arrowLen * 0.2);
-  arrow.line.material.linewidth = 2;
-  scene.add(arrow);
-
-  camera.position.set(cx + diag * 0.55, cy + diag * 0.55, cz + diag * 0.4);
-  camera.lookAt(cx, cy, cz);
-  state.camFrame = { cx, cy, cz, diag };
-
-  controls = new OrbitControlsClass(camera, renderer.domElement);
-  controls.target.set(cx, cy, cz);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
-  controls.update();
-
-  window.addEventListener("resize", () => {
-    renderer.setSize(wrap.clientWidth, wrap.clientHeight);
-    camera.aspect = wrap.clientWidth / wrap.clientHeight;
-    camera.updateProjectionMatrix();
-  });
-
-  threeReady = true;
-  animate();
-}
-
-// While comparing (>=1 pinned case), the big interactive canvas is hidden
-// entirely and replaced by the (now enlarged) stationary comparison row --
-// see renderDamageComparisons. Re-shows the interactive view once the
-// comparison list is emptied.
-function updateMainViewLockState() {
-  if (!threeReady) return;
-  const locked = state.pinned.length > 0;
-  const wrap = document.getElementById("damage-canvas-wrap");
-  wrap.style.display = locked ? "none" : "";
-  controls.enabled = !locked;
-  if (locked) {
-    const { cx, cy, cz, diag } = state.camFrame;
-    camera.position.set(cx + diag * 0.55, cy + diag * 0.55, cz + diag * 0.4);
-    controls.target.set(cx, cy, cz);
-    controls.update();
-  }
-  const hint = document.querySelector("#damage-canvas-wrap .mouse-hint");
-  if (hint) {
-    hint.textContent = locked ? "🔒 stationary view while comparing" : "🖱️ drag to rotate · scroll to zoom";
-  }
-}
-
-function animate() {
-  requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
-}
-
-function faceColorArray(caseIdx, nFaces, out) {
-  const offset = caseIdx * nFaces;
-  const bytes = state.damageBytes;
-  const arr = out || new Float32Array(nFaces * 6 * 3);
-  let p = 0;
-  for (let fi = 0; fi < nFaces; fi++) {
-    const d = bytes[offset + fi] / 255; // 0=intact .. 1=failed
-    const g = 1 - d; // gray_r: intact -> white, failed -> black
-    for (let k = 0; k < 6; k++) {
-      arr[p++] = g; arr[p++] = g; arr[p++] = g;
+    const nF = geom.faces.length / 4;
+    // Two triangles per quad face, vertices duplicated so each face can carry
+    // a flat colour.
+    const pos = new Float32Array(nF * 6 * 3);
+    const col = new Float32Array(nF * 6 * 3);
+    const tri = [0, 1, 2, 0, 2, 3];
+    for (let f = 0; f < nF; f++) {
+      for (let k = 0; k < 6; k++) {
+        const vi = geom.faces[f * 4 + tri[k]];
+        const o = (f * 6 + k) * 3;
+        pos[o]     = geom.verts[vi * 3];
+        pos[o + 1] = geom.verts[vi * 3 + 2];   // z -> y
+        pos[o + 2] = geom.verts[vi * 3 + 1];   // y -> z
+      }
     }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    this.colorAttr = new THREE.BufferAttribute(col, 3);
+    g.setAttribute("color", this.colorAttr);
+    this.mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+      vertexColors: true, side: THREE.DoubleSide,
+    }));
+    this.scene.add(this.mesh);
+    this.nFaces = nF;
+
+    let x0 = Infinity, y0 = Infinity, z0 = Infinity;
+    let x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+    for (let i = 0; i < pos.length; i += 3) {
+      if (pos[i] < x0) x0 = pos[i];       if (pos[i] > x1) x1 = pos[i];
+      if (pos[i+1] < y0) y0 = pos[i+1];   if (pos[i+1] > y1) y1 = pos[i+1];
+      if (pos[i+2] < z0) z0 = pos[i+2];   if (pos[i+2] > z1) z1 = pos[i+2];
+    }
+    this.bbox = {
+      cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, cz: (z0 + z1) / 2,
+      hx: (x1 - x0) / 2, hy: (y1 - y0) / 2, hz: (z1 - z0) / 2,
+    };
+    if (!this.fitted) this.fitView();
+    this.requestRender();
   }
-  return arr;
-}
 
-function updateDamageColors(caseIdx) {
-  if (!threeReady || caseIdx === null) return; // leave last-rendered damage showing; see the "not sampled" text overlay instead
-  faceColorArray(caseIdx, state.params.n_faces, colorAttr.array);
-  colorAttr.needsUpdate = true;
-}
-
-// Static (non-interactive) thumbnail render of one case's damage, reusing
-// the main scene's shared vertex-position buffer -- only the per-face
-// color attribute differs per case. Returns a data: URL.
-function renderDamageThumbnail(caseIdx) {
-  if (!threeReady || !state.damageBytes) return null;
-  const size = 480;
-  const off = document.createElement("canvas");
-  off.width = size; off.height = size;
-  const r = new THREE.WebGLRenderer({ canvas: off, antialias: true, alpha: true, preserveDrawingBuffer: true });
-  r.setClearColor(0x000000, 0);
-  const s = new THREE.Scene();
-  const cam = new THREE.PerspectiveCamera(45, 1, 1, 100000);
-  const nFaces = state.params.n_faces;
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", mesh3d.geometry.getAttribute("position"));
-  const colArr = faceColorArray(caseIdx, nFaces);
-  geo.setAttribute("color", new THREE.BufferAttribute(colArr, 3));
-  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
-  const m = new THREE.Mesh(geo, mat);
-  s.add(m);
-  const { cx, cy, cz, diag } = state.camFrame;
-  cam.position.set(cx + diag * 0.55, cy + diag * 0.55, cz + diag * 0.4);
-  cam.lookAt(cx, cy, cz);
-  r.render(s, cam);
-  const dataURL = off.toDataURL("image/png");
-  geo.dispose();
-  mat.dispose();
-  r.dispose();
-  return dataURL;
-}
-
-function addThumbTo(rowEl, caseIdx, label, color, big) {
-  const url = renderDamageThumbnail(caseIdx);
-  if (!url) return;
-  const wrap = document.createElement("div");
-  wrap.className = "damage-thumb" + (big ? " damage-thumb-big" : "");
-  const img = document.createElement("img");
-  img.src = url;
-  img.style.borderColor = color;
-  wrap.appendChild(img);
-  const lbl = document.createElement("div");
-  lbl.className = "thumb-label";
-  const dot = document.createElement("span");
-  dot.className = "dot";
-  dot.style.background = color;
-  lbl.appendChild(dot);
-  const txt = document.createElement("span");
-  txt.textContent = label;
-  lbl.appendChild(txt);
-  wrap.appendChild(lbl);
-  if (big) {
-    const params = document.createElement("div");
-    params.className = "thumb-params";
-    params.textContent = paramSummary(state.params.cases[caseIdx]);
-    wrap.appendChild(params);
+  /** damage: Uint8Array of length nFaces, 0 intact .. 255 failed. */
+  setDamage(damage) {
+    if (!this.mesh) return;
+    const col = this.colorAttr.array;
+    for (let f = 0; f < this.nFaces; f++) {
+      const v = 1 - (damage[f] || 0) / 255;
+      // Intact material is a light cool grey, NOT white: on a white page a
+      // white pier disappears and only the cracks are left floating.
+      const r = 0.085 + 0.695 * v, g = 0.094 + 0.701 * v, b = 0.110 + 0.721 * v;
+      for (let k = 0; k < 6; k++) {
+        const o = (f * 6 + k) * 3;
+        col[o] = r; col[o + 1] = g; col[o + 2] = b;
+      }
+    }
+    this.colorAttr.needsUpdate = true;
+    this.requestRender();
   }
-  rowEl.appendChild(wrap);
 }
 
-// While comparing, the big interactive canvas is hidden entirely and this
-// row becomes the main view: current selection (live, updates as toggles
-// change) shown first and larger, followed by each pinned case at the
-// same enlarged size. With nothing pinned, the row is empty and the big
-// interactive canvas is shown instead (see updateMainViewLockState).
-function renderDamageComparisons() {
-  const row = document.getElementById("damage-compare-row");
-  row.innerHTML = "";
-  if (!threeReady) return;
-  const comparing = state.pinned.length > 0;
-  if (!comparing) return;
-  const curIdx = caseIndexFromSelection();
-  if (curIdx !== null) {
-    addThumbTo(row, curIdx, `${state.params.cases[curIdx].label} (current)`, "#4f9dff", true);
-  }
-  state.pinned.forEach(p => addThumbTo(row, p.idx, p.label, p.color, true));
-}
+/* ------------------------------------------------------------------ charts */
+Chart.defaults.font.family =
+  '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif';
+Chart.defaults.font.size = 11;
+Chart.defaults.color = "#6e6e73";
 
-// ---------- CSCM yield surface (computed client-side, no data file needed) ----------
-// Ff(J1) = alpha - lamda*exp(-beta*J1) + theta*J1  (shear-failure meridian)
-// X(L)   = L + R*Ff(L)                              (cap position on J1 axis)
-// Fc(J1) = 1 for J1<L, else 1-((J1-L)/(X-L))^2       (elliptical cap multiplier)
-// Fcont(J1) = Ff(J1) * sqrt(max(Fc(J1),0))
-// Fixed params match run_paper_cscm_sweep.ANCHOR / cscm_yield_surface_report.py
-// (lamda/beta/R/X0 are not swept in this factorial grid).
-const CSCM_FIXED = { lamda: 10.51, beta: 0.01929, R: 5.0, kappa0: 88.99 };
-const J1_MIN = -10, J1_MAX = 350, J1_N = 120;
-const YIELD_Y_MAX = 160; // fixed default view; Fcont stays well under this across the swept theta/alpha range -- scroll/drag to zoom in if needed
-
-function cscmYieldCurve(alpha, theta, fixed = CSCM_FIXED) {
-  const { lamda, beta, R, kappa0 } = fixed;
-  const Ff = j1 => alpha - lamda * Math.exp(-beta * j1) + theta * j1;
-  const L = kappa0;
-  const X = L + R * Ff(L);
-  const pts = [];
-  for (let i = 0; i < J1_N; i++) {
-    const j1 = J1_MIN + (J1_MAX - J1_MIN) * i / (J1_N - 1);
-    const ff = Ff(j1);
-    const fc = j1 < L ? 1 : 1 - ((j1 - L) / (X - L)) ** 2;
-    const fcont = fc > 0 ? ff * Math.sqrt(fc) : 0;
-    pts.push({ x: j1, y: Math.max(0, fcont) });
-  }
-  return pts;
-}
-
-// ---------- Comparison / pin feature ----------
-const PIN_COLORS = ["#ffd166", "#06d6a0", "#ef476f", "#8338ec", "#3a86ff", "#fb5607", "#ffb4a2"];
-state.pinned = []; // [{idx, label, color}]
-
-function pinColorFor(n) {
-  return PIN_COLORS[n % PIN_COLORS.length];
-}
-
-function renderPinnedList() {
-  const el = document.getElementById("pinned-list");
-  el.innerHTML = "";
-  state.pinned.forEach(p => {
-    const chip = document.createElement("div");
-    chip.className = "pin-chip";
-    const dot = document.createElement("span");
-    dot.className = "dot";
-    dot.style.background = p.color;
-    chip.appendChild(dot);
-    const row = state.params.cases[p.idx];
-    const txt = document.createElement("span");
-    const scoreTxt = row && row.combined_v2 !== undefined ? ` (combined ${row.combined_v2.toFixed(1)})` : "";
-    txt.textContent = `${p.label}${scoreTxt} -- ${paramSummary(row)}`;
-    chip.appendChild(txt);
-    const rm = document.createElement("button");
-    rm.textContent = "✕";
-    rm.addEventListener("click", () => {
-      state.pinned = state.pinned.filter(x => x.idx !== p.idx);
-      renderPinnedList();
-      refreshAllCharts();
-    });
-    chip.appendChild(rm);
-    el.appendChild(chip);
-  });
-}
-
-function addCurrentToPinned() {
-  const idx = caseIndexFromSelection();
-  if (idx === null) return; // current combo has no data -- nothing to pin
-  if (state.pinned.some(p => p.idx === idx)) return;
-  if (state.pinned.length >= PIN_COLORS.length) {
-    state.pinned.shift();
-  }
-  state.pinned.push({ idx, label: state.params.cases[idx].label, color: pinColorFor(state.pinned.length) });
-  // recolor sequentially so chip colors always match chart line colors
-  state.pinned.forEach((p, i) => { p.color = pinColorFor(i); });
-  renderPinnedList();
-  refreshAllCharts();
-}
-
-// ---------- Chart.js curves ----------
-let chartForce, chartP1, chartP4, chartYield;
-
-// alignMode: "none" (raw, absolute time -- unused now) | "time" (onset-sync
-// only, no baseline shift -- force) | "full" (onset-sync + baseline zero --
-// P1/P4).
-function makeChart(canvasId, yLabel, expT, expY, color, xMin, xMax, alignMode) {
-  const ctx = document.getElementById(canvasId).getContext("2d");
-  const expData = alignMode === "none" ? expT.map((t, i) => ({ x: t, y: expY[i] }))
-    : onsetShiftedPoints(expT, expY, alignMode === "full" ? "exp" : "none");
-  return new Chart(ctx, {
+function makeChart(canvas, xLabel, xMax) {
+  return new Chart(canvas, {
     type: "line",
-    data: {
-      datasets: [
-        { label: "simulation", data: [], borderColor: color, backgroundColor: "transparent", borderWidth: 2, pointRadius: 0, tension: 0.15 },
-        { label: "experiment (digitized)", data: expData, borderColor: "#8a94a3", borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, tension: 0.15 },
-      ],
-    },
+    data: { datasets: [] },
     options: {
-      animation: false,
       responsive: true,
       maintainAspectRatio: false,
+      animation: false,
       parsing: false,
+      normalized: true,
+      interaction: { mode: "nearest", axis: "x", intersect: false },
+      elements: { point: { radius: 0 }, line: { borderWidth: 1.6, tension: 0.18 } },
       scales: {
-        x: { type: "linear", min: xMin, max: xMax, title: { display: true, text: alignMode !== "none" ? "time since onset (s)" : "time (s)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
-        y: { title: { display: true, text: yLabel, color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
-      },
-      plugins: { legend: { labels: { color: "#e8eaed", filter: (item, data) => !data.datasets[item.datasetIndex].hidden } } },
-    },
-  });
-}
-
-function initCharts() {
-  chartForce = makeChart("force-chart", "force (kN)", state.expRef.force.t, state.expRef.force.y, "#4f9dff", 0, 0.03, "time");
-  chartP1 = makeChart("p1-chart", "P1 disp (mm)", state.expRef.P1.t, state.expRef.P1.y, "#4fd18b", -0.02, 0.2, "full");
-  chartP4 = makeChart("p4-chart", "P4 disp (mm)", state.expRef.P4.t, state.expRef.P4.y, "#ff8a4f", -0.02, 0.2, "full");
-
-  const yctx = document.getElementById("yield-chart").getContext("2d");
-  chartYield = new Chart(yctx, {
-    type: "line",
-    data: { datasets: [
-      { label: "current", data: [], borderColor: "#4f9dff", backgroundColor: "transparent", borderWidth: 2, pointRadius: 0, tension: 0.1 },
-      { label: "J1 = 0", data: [{ x: 0, y: 0 }, { x: 0, y: YIELD_Y_MAX }], borderColor: "#6b7280", borderDash: [4, 4], borderWidth: 1, pointRadius: 0 },
-    ] },
-    options: {
-      animation: false, responsive: true, maintainAspectRatio: false, parsing: false,
-      scales: {
-        x: { type: "linear", min: J1_MIN, max: J1_MAX, title: { display: true, text: "J1 (MPa)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
-        y: { min: 0, max: YIELD_Y_MAX, title: { display: true, text: "sqrt(J2) (MPa)", color: "#9aa4b2" }, ticks: { color: "#9aa4b2" }, grid: { color: "#262c35" } },
+        x: {
+          type: "linear", min: 0, max: xMax,
+          title: { display: true, text: xLabel, color: "#86868b" },
+          grid: { color: "#f0f0f4" },
+          border: { color: "#d2d2d7" },
+          ticks: { maxTicksLimit: 7 },
+        },
+        y: {
+          grid: { color: "#f0f0f4" },
+          border: { color: "#d2d2d7" },
+          ticks: { maxTicksLimit: 6 },
+        },
       },
       plugins: {
-        legend: { labels: { color: "#e8eaed", filter: (item, data) => !data.datasets[item.datasetIndex].hidden } },
-        zoom: {
-          // y is sqrt(J2) -- never negative and always shown fixed at
-          // [0, YIELD_Y_MAX], so only J1 (x) is pannable/zoomable. Locking
-          // y here is what fixes the axis drifting further negative on
-          // every drag.
-          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" },
-          pan: { enabled: true, mode: "x" },
-          limits: { x: { min: J1_MIN, max: J1_MAX } },
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "rgba(29,29,31,.92)",
+          padding: 9, cornerRadius: 8, displayColors: true, boxWidth: 8,
+          callbacks: {
+            title: (it) => `t = ${(+it[0].parsed.x).toFixed(1)} ms`,
+            label: (it) => `${it.dataset.label}: ${(+it.parsed.y).toFixed(1)}`,
+          },
         },
       },
     },
   });
 }
 
-// Remove any extra (pinned-case) datasets beyond the fixed base ones, then
-// re-add one dataset per currently pinned case, in matching colors.
-function syncPinnedDatasets(chart, nBase, buildData) {
-  chart.data.datasets.length = nBase;
-  state.pinned.forEach(p => {
-    const data = buildData(p);
-    chart.data.datasets.push({
-      label: p.label, data: data || [], borderColor: p.color, backgroundColor: "transparent",
-      borderWidth: 1.5, pointRadius: 0, tension: 0.15, borderDash: data ? [] : [2, 2],
-    });
-  });
-  chart.update();
+/** Curve payloads store t in seconds; charts want milliseconds. */
+function points(t, y, zeroBase) {
+  if (!t || !y) return [];
+  const y0 = zeroBase ? y[0] : 0;
+  const out = new Array(t.length);
+  for (let i = 0; i < t.length; i++) out[i] = { x: t[i] * 1e3, y: y[i] - y0 };
+  return out;
 }
 
-function updateCharts(idx) {
-  if (!chartForce) return;
-  // While comparing, hide the "current selection" curve itself -- showing
-  // it alongside every pinned case was confusing (user: "헷갈려"). Only
-  // the pinned cases + experiment stay visible; un-hides once the
-  // comparison list is cleared. Also hidden when the current combo has no
-  // data at all (idx === null).
-  const comparing = state.pinned.length > 0;
-  chartForce.data.datasets[0].hidden = comparing || idx === null;
-  chartP1.data.datasets[0].hidden = comparing || idx === null;
-  chartP4.data.datasets[0].hidden = comparing || idx === null;
+function setSeries(chart, series) {
+  chart.data.datasets = series;
+  chart.update("none");
+}
 
-  const c = idx === null ? null : state.curves[state.params.cases[idx].label];
-  if (c) {
-    chartForce.data.datasets[0].data = alignForceSim(c.t_force, c.force);
-    chartP1.data.datasets[0].data = alignSimToExp(c.t_p1, c.p1, state.expRef.P1.t, state.expRef.P1.y);
-    chartP4.data.datasets[0].data = alignSimToExp(c.t_p4, c.p4, state.expRef.P4.t, state.expRef.P4.y);
+/* ------------------------------------------------------------------ state */
+const groups = {};        // key -> {meta, curves, layout, meshes:{}, damage:{}}
+const views = {};         // key -> PierView
+let expRef = null;        // measured reference curves, both tests
+
+/** Measured curve as chart points, or [] when that channel was not digitised. */
+function expPoints(testNum, channel) {
+  const rec = expRef?.[`test${testNum}`]?.[channel];
+  if (!rec) return [];
+  return rec.t.map((t, i) => ({ x: t * 1e3, y: rec.y[i] }));
+}
+
+function expDataset(testNum, channel) {
+  const data = expPoints(testNum, channel);
+  if (!data.length) return null;
+  return { label: "measured", data, borderColor: "#1d1d1f", borderWidth: 1.5,
+           borderDash: [5, 4], order: 99 };
+}
+
+async function loadGroup(key, extra = []) {
+  if (groups[key]) return groups[key];
+  const base = `data/${key}`;
+  const [meta, curves, ...rest] = await Promise.all([
+    getJSON(`${base}/meta.json`),
+    getJSON(`${base}/curves.json`),
+    ...extra.map((f) => getJSON(`${base}/${f}`)),
+  ]);
+  const g = { meta, curves, meshes: {}, damage: {}, base };
+  if (extra.length) g.layout = rest[0];
+  groups[key] = g;
+  return g;
+}
+
+async function ensureMesh(g, meshKey) {
+  if (g.meshes[meshKey]) return g.meshes[meshKey];
+  const buf = await getBuffer(`${g.base}/mesh_${meshKey}.bin`);
+  const head = new Uint32Array(buf, 0, 2);
+  const nV = head[0], nF = head[1];
+  const verts = new Float32Array(buf, 8, nV * 3);
+  const faces = new Uint32Array(buf, 8 + nV * 12, nF * 4);
+  g.meshes[meshKey] = { verts, faces, nF };
+  return g.meshes[meshKey];
+}
+
+async function ensureDamage(g, meshKey) {
+  if (g.damage[meshKey]) return g.damage[meshKey];
+  g.damage[meshKey] = new Uint8Array(await getBuffer(`${g.base}/damage_${meshKey}.bin`));
+  return g.damage[meshKey];
+}
+
+async function showDamage(viewKey, g, caseRow) {
+  const wrap = $(`#${viewKey}-damage-wrap`);
+  const nodata = $(".nodata", wrap);
+  if (!caseRow) { nodata.hidden = false; return; }
+  nodata.hidden = true;
+  const view = views[viewKey];
+  if (!view.ready) await view.init();
+  const mk = caseRow.mesh;
+  const geom = await ensureMesh(g, mk);
+  const dmg = await ensureDamage(g, mk);
+  view.setGeometry(mk, geom);
+  view.setDamage(dmg.subarray(caseRow.dmg_slot * geom.nF, (caseRow.dmg_slot + 1) * geom.nF));
+}
+
+/* ======================================================= view: sensitivity */
+const PARAM_LABEL = { alpha: "α", theta: "θ", lamda: "λ",
+                      E: "E", GFC: "GFC", GFT: "GFT" };
+
+const ofat = { sel: null, charts: {} };
+
+async function initOfat() {
+  const g = await loadGroup("ofat", ["layout.json"]);
+  const { rows, cols, cells } = g.layout;
+  const grid = $("#ofat-grid");
+  grid.style.gridTemplateColumns = `auto repeat(${cols.length}, 1fr)`;
+  grid.innerHTML = "";
+
+  grid.appendChild(Object.assign(document.createElement("div"), { className: "gm-head" }));
+  for (const c of cols) {
+    grid.appendChild(Object.assign(document.createElement("div"), {
+      className: "gm-head", textContent: c === 1 ? "default" : `×${c}`,
+    }));
   }
-  syncPinnedDatasets(chartForce, 2, p => {
-    const pc = state.curves[p.label];
-    return pc ? alignForceSim(pc.t_force, pc.force) : null;
-  });
-  syncPinnedDatasets(chartP1, 2, p => {
-    const pc = state.curves[p.label];
-    return pc ? alignSimToExp(pc.t_p1, pc.p1, state.expRef.P1.t, state.expRef.P1.y) : null;
-  });
-  syncPinnedDatasets(chartP4, 2, p => {
-    const pc = state.curves[p.label];
-    return pc ? alignSimToExp(pc.t_p4, pc.p4, state.expRef.P4.t, state.expRef.P4.y) : null;
-  });
-}
 
-// The yield surface is a pure function of the SELECTED alpha/theta level
-// values, not tied to whether a simulated case exists for the full combo
-// -- so it always renders, even for a "not sampled" combination.
-function updateYieldChart() {
-  if (!chartYield) return;
-  const theta = state.params.levels.theta[state.selected.theta];
-  const alpha = state.params.levels.alpha[state.selected.alpha];
-  chartYield.data.datasets[0].hidden = state.pinned.length > 0;
-  chartYield.data.datasets[0].data = cscmYieldCurve(alpha, theta);
-  chartYield.data.datasets[0].label = `current (alpha=${alpha}, theta=${theta})`;
-  syncPinnedDatasets(chartYield, 2, p => {
-    const r = state.params.cases[p.idx];
-    return cscmYieldCurve(r.alpha, r.theta);
-  });
-}
-
-function refreshAllCharts() {
-  updateCharts(caseIndexFromSelection());
-  updateYieldChart();
-  renderDamageComparisons();
-  updateMainViewLockState();
-}
-
-function fmtPct(v) {
-  return v === undefined || v === null ? "--" : v.toFixed(1) + "%";
-}
-
-function onSelectionChanged() {
-  const idx = caseIndexFromSelection();
-  const pinBtn = document.getElementById("pin-btn");
-  const metricsEl = document.getElementById("case-metrics");
-  const noDataEl = document.getElementById("damage-no-data");
-  if (idx === null) {
-    document.getElementById("case-label").textContent = "(not sampled)";
-    metricsEl.textContent = "이 파라미터 조합은 시뮬레이션되지 않았어요 -- 다른 값을 선택해보세요.";
-    if (pinBtn) pinBtn.disabled = true;
-    if (noDataEl) noDataEl.style.display = "";
-  } else {
-    if (pinBtn) pinBtn.disabled = false;
-    if (noDataEl) noDataEl.style.display = "none";
-    const row = state.params.cases[idx];
-    document.getElementById("case-label").textContent = row.label;
-    if (row.force_rmse_pct !== undefined) {
-      const combinedTxt = row.combined_v2 !== undefined ? row.combined_v2.toFixed(1) : "--";
-      metricsEl.textContent = `force RMSE ${fmtPct(row.force_rmse_pct)} | P1 peak ${fmtPct(row.P1_peak_pct)} | P4 peak ${fmtPct(row.P4_peak_pct)} | combined ${combinedTxt}`;
-    } else if (row.dmg_ok === false || row.curve_ok === false) {
-      metricsEl.textContent = "(this case failed / no data)";
-    } else {
-      metricsEl.textContent = "";
+  for (const p of rows) {
+    grid.appendChild(Object.assign(document.createElement("div"), {
+      className: "gm-row-label", innerHTML: PARAM_LABEL[p] || p,
+    }));
+    for (const c of cols) {
+      const label = cells[`${p}|${c}`];
+      const b = document.createElement("button");
+      b.className = "gm-cell" + (c === 1 ? " is-default" : "");
+      b.type = "button";
+      if (!label) {
+        b.disabled = true;
+        b.textContent = "—";
+        b.title = "Inadmissible: CSCM requires alpha > lamda";
+      } else {
+        b.textContent = c === 1 ? "default" : `×${c}`;
+        b.dataset.label = label;
+        b.dataset.param = p;
+        b.dataset.mult = c;
+        b.addEventListener("click", () => selectOfat(b));
+      }
+      grid.appendChild(b);
     }
   }
-  updateDamageColors(idx);
-  updateCharts(idx);
-  updateYieldChart();
-  renderDamageComparisons(); // no-op unless comparing -- keeps the live "current" thumbnail in sync with toggles
+
+  ofat.charts.force = makeChart($("#ofat-force"), "time (ms)", 20);
+  ofat.charts.p1 = makeChart($("#ofat-p1"), "time (ms)", 150);
+  ofat.charts.p4 = makeChart($("#ofat-p4"), "time (ms)", 150);
+
+  const first = $(".gm-cell:not(:disabled)", grid);
+  if (first) selectOfat(first);
 }
 
-// The concrete mesh geometry is identical across Test1/Test2 (same shared
-// mesh always) -- so switching tests only needs to swap params/curves/
-// exp_ref/damage bytes and rebuild the toggles + exp-reference chart
-// datasets, not the Three.js scene itself.
-function setExpDataset(chart, expT, expY, alignMode) {
-  chart.data.datasets[1].data = alignMode === "none" ? expT.map((t, i) => ({ x: t, y: expY[i] }))
-    : onsetShiftedPoints(expT, expY, alignMode === "full" ? "exp" : "none");
-}
+async function selectOfat(btn) {
+  $$("#ofat-grid .gm-cell.selected").forEach((e) => e.classList.remove("selected"));
+  btn.classList.add("selected");
+  const g = groups.ofat;
+  const label = btn.dataset.label;
+  const row = g.meta.cases.find((c) => c.label === label);
+  const cur = g.curves[label], base = g.curves.anchor;
 
-async function loadTestData(testId) {
-  const [params, expRef, damageBytes, curves] = await Promise.all([
-    loadJSON(`data/${testId}/params.json`),
-    loadJSON(`data/${testId}/exp_ref.json`),
-    loadBinary(`data/${testId}/damage_all.bin`),
-    loadJSON(`data/${testId}/curves.json`),
-  ]);
-  return { params, expRef, damageBytes, curves };
-}
+  const mult = +btn.dataset.mult;
+  const p = btn.dataset.param;
+  $("#ofat-note").textContent = mult === 1
+    ? "All five parameters at their auto-generated CSCM default."
+    : `${PARAM_LABEL[p] || p} at ${mult}× its default; every other parameter unchanged.`;
 
-async function switchTest(testId) {
-  if (state.testId === testId) return;
-  document.querySelectorAll(".test-switch button").forEach(b => b.classList.toggle("active", b.dataset.test === testId));
-  const { params, expRef, damageBytes, curves } = await loadTestData(testId);
-  state.testId = testId;
-  state.params = params;
-  state.expRef = expRef;
-  state.damageBytes = damageBytes;
-  state.curves = curves;
-  state.pinned = [];
-  buildCaseIndex();
-  params.param_names.forEach(name => { state.selected[name] = Math.floor(params.levels[name].length / 2); });
-
-  buildToggles();
-  renderPinnedList();
-  if (chartForce) {
-    setExpDataset(chartForce, expRef.force.t, expRef.force.y, "time");
-    setExpDataset(chartP1, expRef.P1.t, expRef.P1.y, "full");
-    setExpDataset(chartP4, expRef.P4.t, expRef.P4.y, "full");
+  const spec = [["force", "force", "t_force", false],
+                ["p1", "p1", "t_p1", true],
+                ["p4", "p4", "t_p4", true]];
+  for (const [chartKey, yKey, tKey, zero] of spec) {
+    const ds = [];
+    if (base && mult !== 1) {
+      ds.push({ label: "default", data: points(base[tKey], base[yKey], zero),
+                borderColor: DEFAULT_GREY, borderWidth: 1.4, borderDash: [4, 3] });
+    }
+    if (cur) {
+      ds.push({ label: mult === 1 ? "default" : `${PARAM_LABEL[p] || p} ×${mult}`,
+                data: points(cur[tKey], cur[yKey], zero),
+                borderColor: SERIES[0], borderWidth: 2 });
+    }
+    setSeries(ofat.charts[chartKey], ds);
   }
-  onSelectionChanged();
+  await showDamage("ofat", g, row);
 }
 
-async function main() {
-  const mesh = await loadJSON("data/test1/mesh.json");
-  state.mesh = mesh;
-  const { params, expRef, damageBytes, curves } = await loadTestData("test1");
-  state.testId = "test1";
-  state.params = params;
-  state.expRef = expRef;
-  state.damageBytes = damageBytes;
-  state.curves = curves;
-  buildCaseIndex();
+/* ==================================================== view: mesh convergence */
+const meshView = { on: new Set(), active: null, charts: {} };
+const UNSOUND = 0.40;
 
-  params.param_names.forEach(name => { state.selected[name] = Math.floor(params.levels[name].length / 2); }); // default: middle level of each
+async function initMesh() {
+  const g = await loadGroup("mesh");
+  const list = $("#mesh-list");
+  list.innerHTML = "";
+  g.meta.cases.forEach((c, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (c.energy_ratio < UNSOUND ? " unsound" : "");
+    b.innerHTML = `<span class="swatch" style="color:${SERIES[i % SERIES.length]}"></span>
+                   h = ${c.h_mm} mm`;
+    b.title = `${c.n_solid.toLocaleString()} concrete elements, energy ratio ${c.energy_ratio}`;
+    b.dataset.label = c.label;
+    b.addEventListener("click", () => toggleMesh(c.label));
+    list.appendChild(b);
+  });
+  meshView.charts.force = makeChart($("#mesh-force"), "time (ms)", 20);
+  meshView.charts.p1 = makeChart($("#mesh-p1"), "time (ms)", 150);
+  meshView.charts.p4 = makeChart($("#mesh-p4"), "time (ms)", 150);
 
-  buildToggles();
-  document.getElementById("pin-btn").addEventListener("click", addCurrentToPinned);
-  document.getElementById("yield-reset-zoom").addEventListener("click", () => { if (chartYield) chartYield.resetZoom(); });
-  document.querySelectorAll(".test-switch button").forEach(b => b.addEventListener("click", () => switchTest(b.dataset.test)));
-  await initThree();
+  // Start with the coarsest, mesh1x and the finest: enough to show the trend
+  // without nine curves on top of each other.
+  const picks = [g.meta.cases[0], g.meta.cases[4], g.meta.cases.at(-1)].filter(Boolean);
+  picks.forEach((c) => meshView.on.add(c.label));
+  meshView.active = picks.at(-1).label;
+  await refreshMesh();
+}
+
+async function toggleMesh(label) {
+  if (meshView.on.has(label) && meshView.active !== label) {
+    meshView.active = label;                       // second click: draw it in 3D
+  } else if (meshView.on.has(label)) {
+    meshView.on.delete(label);
+    if (meshView.active === label) meshView.active = [...meshView.on].at(-1) || null;
+  } else {
+    meshView.on.add(label);
+    meshView.active = label;
+  }
+  await refreshMesh();
+}
+
+async function refreshMesh() {
+  const g = groups.mesh;
+  $$("#mesh-list .chip").forEach((b) => {
+    b.classList.toggle("on", meshView.on.has(b.dataset.label));
+    b.classList.toggle("active-3d", meshView.active === b.dataset.label);
+  });
+  const spec = [["force", "force", "t_force", false],
+                ["p1", "p1", "t_p1", true],
+                ["p4", "p4", "t_p4", true]];
+  for (const [chartKey, yKey, tKey, zero] of spec) {
+    const ds = [];
+    g.meta.cases.forEach((c, i) => {
+      if (!meshView.on.has(c.label)) return;
+      const cu = g.curves[c.label];
+      if (!cu) return;
+      ds.push({ label: `h = ${c.h_mm} mm`, data: points(cu[tKey], cu[yKey], zero),
+                borderColor: SERIES[i % SERIES.length],
+                borderWidth: c.label === meshView.active ? 2.4 : 1.5,
+                borderDash: c.energy_ratio < UNSOUND ? [5, 3] : [] });
+    });
+    setSeries(meshView.charts[chartKey], ds);
+  }
+  const row = g.meta.cases.find((c) => c.label === meshView.active);
+  $("#mesh-active-label").textContent = row
+    ? `h = ${row.h_mm} mm · ${row.n_solid.toLocaleString()} elements · energy ratio ${row.energy_ratio}`
+    : "";
+  await showDamage("mesh", g, row);
+}
+
+/* ======================================================== view: calibrated */
+const calib = { on: new Set(), active: null, charts: {} };
+
+const CALIB_SCORES = [
+  ["mesh1x adopted", "118.1 ± 1.4", "49.4 ± 1.3", "68.7 ± 0.9", "9"],
+  ["mesh2x adopted", "127.7 ± 5.0", "41.2 ± 2.4", "86.4 ± 4.6", "11"],
+  ["CSCM default (mesh1x)", "262.3 ± 21.7", "139.8 ± 3.9", "122.5 ± 23.4", "5"],
+];
+
+async function initCalib() {
+  const g = await loadGroup("calib");
+  const list = $("#calib-list");
+  list.innerHTML = "";
+  g.meta.cases.forEach((c, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip";
+    b.innerHTML = `<span class="swatch" style="color:${SERIES[i % SERIES.length]}"></span>${c.title}`;
+    b.dataset.label = c.label;
+    b.addEventListener("click", () => toggleCalib(c.label));
+    list.appendChild(b);
+  });
+
+  const t = document.createElement("table");
+  t.innerHTML =
+    `<thead><tr><th>Parameter set</th><th>J</th><th>C<sub>Test1</sub></th>
+     <th>C<sub>Test2</sub></th><th>repeats</th></tr></thead><tbody>` +
+    CALIB_SCORES.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td>
+     <td>${r[3]}</td><td>${r[4]}</td></tr>`).join("") + "</tbody>";
+  $("#calib-table").innerHTML = "";
+  $("#calib-table").appendChild(t);
+
+  const start = g.meta.cases.filter((c) => c.test === 1);
+  start.forEach((c) => calib.on.add(c.label));
+  calib.active = start[0]?.label ?? null;
+  calib.charts.force = makeChart($("#calib-force"), "time (ms)", 20);
+  calib.charts.p1 = makeChart($("#calib-p1"), "time (ms)", 150);
+  calib.charts.p4 = makeChart($("#calib-p4"), "time (ms)", 150);
+  await refreshCalib();
+}
+
+async function toggleCalib(label) {
+  if (calib.on.has(label) && calib.active !== label) {
+    calib.active = label;
+  } else if (calib.on.has(label)) {
+    calib.on.delete(label);
+    if (calib.active === label) calib.active = [...calib.on].at(-1) || null;
+  } else {
+    calib.on.add(label);
+    calib.active = label;
+  }
+  await refreshCalib();
+}
+
+async function refreshCalib() {
+  const g = groups.calib;
+  $$("#calib-list .chip").forEach((b) => {
+    b.classList.toggle("on", calib.on.has(b.dataset.label));
+    b.classList.toggle("active-3d", calib.active === b.dataset.label);
+  });
+  const spec = [["force", "force", "t_force", false],
+                ["p1", "p1", "t_p1", true],
+                ["p4", "p4", "t_p4", true]];
+  const CHANNEL = { force: "force", p1: "P1", p4: "P4" };
+  // Only one measurement can be drawn per chart; use the test the highlighted
+  // case belongs to, so the dashed line always matches what is in front.
+  const activeRow = g.meta.cases.find((c) => c.label === calib.active);
+  const shownTests = new Set(g.meta.cases.filter((c) => calib.on.has(c.label)).map((c) => c.test));
+  const expTest = activeRow ? activeRow.test : [...shownTests][0];
+  for (const [chartKey, yKey, tKey, zero] of spec) {
+    const ds = [];
+    g.meta.cases.forEach((c, i) => {
+      if (!calib.on.has(c.label)) return;
+      const cu = g.curves[c.label];
+      if (!cu) return;
+      ds.push({ label: c.title, data: points(cu[tKey], cu[yKey], zero),
+                borderColor: SERIES[i % SERIES.length],
+                borderWidth: c.label === calib.active ? 2.4 : 1.5 });
+    });
+    if (expTest) {
+      const e = expDataset(expTest, CHANNEL[chartKey]);
+      if (e) ds.push(e);
+    }
+    setSeries(calib.charts[chartKey], ds);
+  }
+  $(".chart-card .hint", $("#view-calib")).textContent =
+    expTest ? `measurement dashed (Test ${expTest})` : "no measurement shown";
+  const row = g.meta.cases.find((c) => c.label === calib.active);
+  $("#calib-active-label").textContent = row ? row.title : "";
+  await showDamage("calib", g, row);
+}
+
+/* -------------------------------------------------------------------- boot */
+const INIT = { ofat: initOfat, mesh: initMesh, calib: initCalib };
+const started = new Set();
+
+async function loadExpRef() {
+  if (expRef) return;
   try {
-    initCharts();
-  } catch (e) {
-    console.error("Chart.js failed to load from CDN", e);
+    expRef = await getJSON("data/exp_ref.json");
+  } catch (err) {
+    console.warn("no measured reference available:", err.message);
+    expRef = {};
   }
+}
 
-  onSelectionChanged();
+async function showView(key, push = true) {
+  if (!INIT[key]) key = "ofat";
+  if (push && location.hash.slice(1) !== key) history.replaceState(null, "", `#${key}`);
+  $$("#view-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.view === key));
+  $$(".view").forEach((s) => s.classList.toggle("active", s.id === `view-${key}`));
+  if (!started.has(key)) {
+    started.add(key);
+    try {
+      await loadExpRef();
+      await INIT[key]();
+    } catch (err) {
+      started.delete(key);
+      console.error(err);
+      const note = $(`#view-${key} .view-intro`);
+      if (note) note.textContent = `Could not load this dataset: ${err.message}`;
+    }
+  }
+  // A canvas sized while its section was hidden comes back as 0x0.
+  const v = views[key];
+  if (v?.ready) v.resize();
+}
+
+function main() {
+  for (const k of Object.keys(INIT)) views[k] = new PierView($(`#${k}-damage`));
+  $$("#view-tabs button").forEach((b) =>
+    b.addEventListener("click", () => showView(b.dataset.view)));
+  $("#build-stamp").textContent = "Data exported 2026-10-16.";
+  // The view lives in the hash so a tab can be linked to directly.
+  window.addEventListener("hashchange", () => showView(location.hash.slice(1), false));
+  showView(location.hash.slice(1) || "ofat");
 }
 
 main();

@@ -1,13 +1,13 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CSCM 5x5x5x5x5 Factorial Explorer</title>
+<title>RC Pier Impact — CSCM Explorer</title>
+<meta name="description" content="Interactive companion to the CSCM calibration report for RC pier impact: parameter sensitivity, mesh convergence and the calibrated model.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏗️</text></svg>">
 <link rel="stylesheet" href="style.css">
 <script src="vendor/chart.umd.js"></script>
-<script src="vendor/chartjs-plugin-zoom.min.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -18,64 +18,146 @@
 </script>
 </head>
 <body>
-<header>
-  <h1>RC Pier Impact -- CSCM Parameter Explorer</h1>
-  <p class="subtitle">5<sup>5</sup> = 3125-case full factorial grid (theta &times; alpha &times; E &times; GFC &times; GFT).
-  Pick a level for each parameter to see the simulated force/displacement response and damage pattern.</p>
+
+<header class="hero">
+  <h1>RC Pier Impact — CSCM Explorer</h1>
+  <p class="lede">
+    Interactive companion to the CSCM calibration report. The figures that are
+    too dense to read on paper live here instead: step through them rather than
+    squint at them.
+  </p>
+  <nav class="segmented" id="view-tabs" role="tablist">
+    <button type="button" data-view="ofat" class="active" role="tab">Parameter sensitivity</button>
+    <button type="button" data-view="mesh" role="tab">Mesh convergence</button>
+    <button type="button" data-view="calib" role="tab">Calibrated model</button>
+  </nav>
 </header>
 
 <main>
-  <section id="controls">
-    <div class="test-switch">
-      <button type="button" data-test="test1" class="active">Test 1</button>
-      <button type="button" data-test="test2">Test 2</button>
-    </div>
-    <div class="toggle-group" id="toggle-container"></div>
-    <div id="case-info">
-      <span id="case-label">--</span>
-      <span id="case-metrics"></span>
-      <button id="pin-btn" type="button">+ Add to comparison</button>
-    </div>
-    <div id="pinned-list"></div>
-  </section>
 
-  <section id="views">
-    <div class="panel" id="damage-panel">
-      <h2>Damage (grayscale, 0=intact / 1=failed)</h2>
-      <div id="damage-canvas-wrap">
-        <canvas id="damage-canvas"></canvas>
-        <div class="arrow-legend">🔴 impact direction</div>
-        <div class="mouse-hint">🖱️ drag to rotate &middot; scroll to zoom</div>
-        <div id="damage-no-data" style="display:none;">이 조합은 시뮬레이션되지 않았어요<br><span>다른 값을 선택해보세요</span></div>
+  <!-- ============================ sensitivity ============================ -->
+  <section class="view active" id="view-ofat">
+    <p class="view-intro">
+      Every parameter is held at its auto-generated CSCM default and one is moved
+      at a time, on Test&nbsp;1 at mesh1x. Pick a cell to see what that change does
+      to the response and to the crack pattern. The default column is the same
+      solve in every row.
+    </p>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Pick a case</h2>
+        <span class="hint">rows: parameter &middot; columns: multiple of default</span>
       </div>
-      <div id="damage-compare-row"></div>
+      <div id="ofat-grid" class="grid-matrix"></div>
+      <p class="note" id="ofat-note"></p>
     </div>
 
-    <div class="panel">
-      <h2>Impact force</h2>
-      <canvas id="force-chart"></canvas>
-    </div>
-
-    <div class="panel">
-      <h2>P1 lateral displacement (top)</h2>
-      <canvas id="p1-chart"></canvas>
-    </div>
-
-    <div class="panel">
-      <h2>P4 lateral displacement (base)</h2>
-      <canvas id="p4-chart"></canvas>
-    </div>
-
-    <div class="panel">
-      <h2>CSCM yield/failure surface <button id="yield-reset-zoom" type="button">reset zoom</button></h2>
-      <canvas id="yield-chart"></canvas>
-      <p class="hint">shear-failure/cap surface Fcont(J1) for the selected theta/alpha (lamda, beta, R, X0 fixed at project defaults) &middot; scroll to zoom, drag to pan</p>
+    <div class="panel-row">
+      <div class="card damage-card">
+        <div class="card-head">
+          <h2>Crack pattern</h2>
+          <span class="hint">drag to rotate &middot; scroll to zoom</span>
+        </div>
+        <div class="canvas-wrap" id="ofat-damage-wrap">
+          <canvas id="ofat-damage"></canvas>
+          <div class="impact-tag">impact direction</div>
+          <div class="nodata" hidden>Not simulated<br><span>Choose another cell</span></div>
+        </div>
+        <div class="scale-bar"><span>intact</span><i></i><span>failed</span></div>
+      </div>
+      <div class="card chart-card">
+        <div class="card-head"><h2>Response</h2>
+          <span class="hint">default shown behind in grey</span></div>
+        <div class="chart-grid">
+          <div><h3>Impact force (kN)</h3><canvas id="ofat-force"></canvas></div>
+          <div><h3>P1 displacement (mm)</h3><canvas id="ofat-p1"></canvas></div>
+          <div><h3>P4 displacement (mm)</h3><canvas id="ofat-p4"></canvas></div>
+        </div>
+      </div>
     </div>
   </section>
+
+  <!-- ========================== mesh convergence ========================= -->
+  <section class="view" id="view-mesh">
+    <p class="view-intro">
+      Nine refinement levels at the CSCM default, named by representative element
+      length <em>h</em> = (V/N)<sup>1/3</sup>. Toggle levels on and off to see what
+      settles with refinement and what does not.
+    </p>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Levels</h2>
+        <span class="hint">click to show or hide &middot; the open one is drawn in 3D</span>
+      </div>
+      <div id="mesh-list" class="chip-row"></div>
+    </div>
+
+    <div class="panel-row">
+      <div class="card damage-card">
+        <div class="card-head"><h2>Crack pattern</h2><span class="hint" id="mesh-active-label"></span></div>
+        <div class="canvas-wrap" id="mesh-damage-wrap">
+          <canvas id="mesh-damage"></canvas>
+          <div class="impact-tag">impact direction</div>
+          <div class="nodata" hidden>Not available</div>
+        </div>
+        <div class="scale-bar"><span>intact</span><i></i><span>failed</span></div>
+      </div>
+      <div class="card chart-card">
+        <div class="card-head"><h2>Response</h2><span class="hint">excursion from rest</span></div>
+        <div class="chart-grid">
+          <div><h3>Impact force (kN)</h3><canvas id="mesh-force"></canvas></div>
+          <div><h3>P1 displacement (mm)</h3><canvas id="mesh-p1"></canvas></div>
+          <div><h3>P4 displacement (mm)</h3><canvas id="mesh-p4"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================== calibrated ============================= -->
+  <section class="view" id="view-calib">
+    <p class="view-intro">
+      The adopted parameter sets against the measurements. mesh1x and mesh2x are
+      calibrated separately: a set tuned on one does not transfer to the other,
+      and the ranking of the two meshes reverses depending on the parameters.
+    </p>
+
+    <div class="card">
+      <div class="card-head"><h2>Cases</h2><span class="hint">click to show or hide</span></div>
+      <div id="calib-list" class="chip-row"></div>
+      <div id="calib-table"></div>
+    </div>
+
+    <div class="panel-row">
+      <div class="card damage-card">
+        <div class="card-head"><h2>Crack pattern</h2><span class="hint" id="calib-active-label"></span></div>
+        <div class="canvas-wrap" id="calib-damage-wrap">
+          <canvas id="calib-damage"></canvas>
+          <div class="impact-tag">impact direction</div>
+          <div class="nodata" hidden>Not available</div>
+        </div>
+        <div class="scale-bar"><span>intact</span><i></i><span>failed</span></div>
+      </div>
+      <div class="card chart-card">
+        <div class="card-head"><h2>Response</h2><span class="hint">measurement dashed</span></div>
+        <div class="chart-grid">
+          <div><h3>Impact force (kN)</h3><canvas id="calib-force"></canvas></div>
+          <div><h3>P1 displacement (mm)</h3><canvas id="calib-p1"></canvas></div>
+          <div><h3>P4 displacement (mm)</h3><canvas id="calib-p4"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
 </main>
 
 <footer>
-  <p>RC pier vehicle-impact CSCM concrete calibration -- Test1 (Chen et al. 2022). Data generated from LS-DYNA solves; solid = simulation, dashed = digitized experimental reference.</p>
+  <p>
+    Companion to the CSCM calibration report for RC pier impact under lateral
+    impactor loading. Simulations run in LS-DYNA with <code>*MAT_CSCM</code>.
+  </p>
+  <p class="muted" id="build-stamp"></p>
 </footer>
 
 <script type="module" src="app.js"></script>
