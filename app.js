@@ -214,7 +214,7 @@ Chart.defaults.font.family =
 Chart.defaults.font.size = 11;
 Chart.defaults.color = "#6e6e73";
 
-function makeChart(canvas, xLabel, xMax, xMin = 0) {
+function makeChart(canvas, xLabel, xMax = undefined, xMin = 0) {
   return new Chart(canvas, {
     type: "line",
     data: { datasets: [] },
@@ -228,7 +228,11 @@ function makeChart(canvas, xLabel, xMax, xMin = 0) {
       elements: { point: { radius: 0 }, line: { borderWidth: 1.6, tension: 0.18 } },
       scales: {
         x: {
-          type: "linear", min: xMin, max: xMax,
+          // null means autoscale. The compression curves run to NEGATIVE
+          // strain, so a hard min of 0 hides them completely.
+          type: "linear",
+          min: xMin === null ? undefined : xMin,
+          max: xMax === null ? undefined : xMax,
           title: { display: true, text: xLabel, color: "#86868b" },
           grid: { color: "#f0f0f4" },
           border: { color: "#d2d2d7" },
@@ -352,7 +356,9 @@ function ofatValue(layout, param, mult) {
   return (base * mult * u.scale).toFixed(u.dp) + u.unit;
 }
 
-let ofatParam = null, ofatMult = null, ofatMode = "tension";
+let ofatParam = null, ofatMult = null;
+let ofatMode = new URLSearchParams(location.search).get("mode") === "compression"
+  ? "compression" : "tension";
 
 async function initOfat() {
   const g = await loadGroup("ofat", ["layout.json"]);
@@ -377,13 +383,15 @@ async function initOfat() {
   ofat.charts.p1 = makeChart($("#ofat-p1"), "time (ms)", 150);
   ofat.charts.p4 = makeChart($("#ofat-p4"), "time (ms)", 150);
   ofat.element = await loadGroup("element").catch(() => null);
-  ofat.charts.yield = makeChart($("#ofat-yield"), "J₁ (MPa)", undefined, undefined);
-  ofat.charts.ss = makeChart($("#ofat-ss"), "strain (-)", undefined, undefined);
-  ofat.charts.dmg = makeChart($("#ofat-dmg"), "strain (-)", undefined, undefined);
+  ofat.charts.yield = makeChart($("#ofat-yield"), "J₁ (MPa)", null, null);
+  ofat.charts.ss = makeChart($("#ofat-ss"), "strain (-)", null, null);
+  ofat.charts.dmg = makeChart($("#ofat-dmg"), "strain (-)", null, null);
   ofat.charts.ss.options.scales.y.title = {
     display: true, text: "σₓₓ (MPa)", color: "#86868b" };
   ofat.charts.dmg.options.scales.y.title = {
     display: true, text: "damage (-)", color: "#86868b" };
+  $$("#ofat-mode button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.mode === ofatMode));
   $$("#ofat-mode button").forEach((b) => b.addEventListener("click", () => {
     ofatMode = b.dataset.mode;
     $$("#ofat-mode button").forEach((x) => x.classList.toggle("active", x === b));
@@ -529,12 +537,27 @@ function drawElementPanels(p, mult) {
                 borderColor: "#d7d7dc", borderWidth: 1.1 });
     }
     const k = avail(mult);
+    let sel = null;
     if (k) {
       const c = g.curves[k];
+      sel = c[field];
       ds.push({ label: mult === 1 ? "default" : `${PARAM_LABEL[p]} ×${mult}`,
                 data: c.strain.map((x, i) => ({ x, y: c[field][i] })),
                 borderColor: SERIES[0], borderWidth: 2.2 });
     }
+    // Scale to the SELECTED curve, not to the family. theta x4 reaches
+    // 429 MPa in compression against the default's 29, and on a shared
+    // autoscale that one outlier flattens every other case to a line on
+    // the axis. The faint curves run off the top instead; they are context.
+    if (sel && sel.length) {
+      const lo = Math.min(0, ...sel), hi = Math.max(0, ...sel);
+      const pad = (hi - lo) * 0.14 || 1;
+      chart.options.scales.y.min = lo - pad;
+      chart.options.scales.y.max = hi + pad;
+    }
+    // Compression strains are negative, so without this the loading runs
+    // right to left.
+    chart.options.scales.x.reverse = ofatMode === "compression";
     setSeries(chart, ds);
   }
 
@@ -548,7 +571,9 @@ function drawElementPanels(p, mult) {
       : "the element survives the imposed strain");
   }
   $("#ofat-mat-note").textContent = note.join(" · ") +
-    ". One 40 mm element under prescribed uniaxial straining, the same element size as mesh1x.";
+    ". One 40 mm element under prescribed uniaxial straining, the same element " +
+    "size as mesh1x. The axes follow the selected case; faint curves are the " +
+    "other multiples and may run off the chart.";
 }
 
 function drawMaterial(p, mult) {
