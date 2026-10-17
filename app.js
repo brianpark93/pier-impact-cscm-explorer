@@ -214,7 +214,7 @@ Chart.defaults.font.family =
 Chart.defaults.font.size = 11;
 Chart.defaults.color = "#6e6e73";
 
-function makeChart(canvas, xLabel, xMax) {
+function makeChart(canvas, xLabel, xMax, xMin = 0) {
   return new Chart(canvas, {
     type: "line",
     data: { datasets: [] },
@@ -228,7 +228,7 @@ function makeChart(canvas, xLabel, xMax) {
       elements: { point: { radius: 0 }, line: { borderWidth: 1.6, tension: 0.18 } },
       scales: {
         x: {
-          type: "linear", min: 0, max: xMax,
+          type: "linear", min: xMin, max: xMax,
           title: { display: true, text: xLabel, color: "#86868b" },
           grid: { color: "#f0f0f4" },
           border: { color: "#d2d2d7" },
@@ -246,7 +246,7 @@ function makeChart(canvas, xLabel, xMax) {
           backgroundColor: "rgba(29,29,31,.92)",
           padding: 9, cornerRadius: 8, displayColors: true, boxWidth: 8,
           callbacks: {
-            title: (it) => `t = ${(+it[0].parsed.x).toFixed(1)} ms`,
+            title: (it) => `${xLabel.split(" ")[0]} = ${(+it[0].parsed.x).toFixed(1)}`,
             label: (it) => `${it.dataset.label}: ${(+it.parsed.y).toFixed(1)}`,
           },
         },
@@ -352,69 +352,84 @@ function ofatValue(layout, param, mult) {
   return (base * mult * u.scale).toFixed(u.dp) + u.unit;
 }
 
+let ofatParam = null, ofatMult = null;
+
 async function initOfat() {
   const g = await loadGroup("ofat", ["layout.json"]);
-  const { rows, cols, cells } = g.layout;
-  const grid = $("#ofat-grid");
-  grid.style.gridTemplateColumns = `auto repeat(${cols.length}, 1fr)`;
-  grid.innerHTML = "";
 
-  grid.appendChild(Object.assign(document.createElement("div"), { className: "gm-head" }));
-  for (const c of cols) {
-    grid.appendChild(Object.assign(document.createElement("div"), {
-      className: "gm-head", textContent: c === 1 ? "default" : `×${c}`,
-    }));
-  }
-
-  for (const p of rows) {
-    grid.appendChild(Object.assign(document.createElement("div"), {
-      className: "gm-row-label", innerHTML: PARAM_LABEL[p] || p,
-    }));
-    for (const c of cols) {
-      const label = cells[`${p}|${c}`];
-      const b = document.createElement("button");
-      b.className = "gm-cell" + (c === 1 ? " is-default" : "");
-      b.type = "button";
-      if (!label) {
-        b.disabled = true;
-        b.textContent = "—";
-        b.title = "Inadmissible: CSCM requires alpha > lamda";
-      } else {
-        // The column heading already carries the multiplier, so the cell
-        // carries the number the multiplier produces.
-        b.textContent = ofatValue(g.layout, p, c);
-        b.dataset.label = label;
-        b.dataset.param = p;
-        b.dataset.mult = c;
-        b.addEventListener("click", () => selectOfat(b));
-      }
-      grid.appendChild(b);
-    }
+  // Two stacked pickers rather than a 6x5 matrix: the matrix does not fit a
+  // narrow rail, and splitting it this way puts the parameter and the value
+  // it takes on separate, readable lines.
+  const plist = $("#ofat-params");
+  plist.innerHTML = "";
+  for (const p of g.layout.rows) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "opt";
+    b.dataset.param = p;
+    b.innerHTML = `<span class="lead">${PARAM_LABEL[p] || p}</span>` +
+                  `<span class="trail">${ofatValue(g.layout, p, 1)}</span>`;
+    b.addEventListener("click", () => pickOfatParam(p));
+    plist.appendChild(b);
   }
 
   ofat.charts.force = makeChart($("#ofat-force"), "time (ms)", 20);
   ofat.charts.p1 = makeChart($("#ofat-p1"), "time (ms)", 150);
   ofat.charts.p4 = makeChart($("#ofat-p4"), "time (ms)", 150);
+  ofat.charts.yield = makeChart($("#ofat-yield"), "J₁ (MPa)", undefined, undefined);
+  ofat.charts.yield.options.scales.y.title = {
+    display: true, text: "√J₂ (MPa)", color: "#86868b" };
 
-  const first = $(".gm-cell:not(:disabled)", grid);
-  if (first) selectOfat(first);
+  pickOfatParam(g.layout.rows[1] ?? g.layout.rows[0]);   // theta reads well first
 }
 
-async function selectOfat(btn) {
-  $$("#ofat-grid .gm-cell.selected").forEach((e) => e.classList.remove("selected"));
-  btn.classList.add("selected");
+function pickOfatParam(p) {
+  ofatParam = p;
   const g = groups.ofat;
-  const label = btn.dataset.label;
+  $$("#ofat-params .opt").forEach((b) =>
+    b.classList.toggle("selected", b.dataset.param === p));
+
+  const vlist = $("#ofat-values");
+  vlist.innerHTML = "";
+  let fallback = null;
+  for (const c of g.layout.cols) {
+    const label = g.layout.cells[`${p}|${c}`];
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "opt";
+    b.dataset.mult = c;
+    if (!label) {
+      b.disabled = true;
+      b.innerHTML = `<span class="lead">${ofatValue(g.layout, p, c)}</span>` +
+                    `<span class="trail">inadmissible</span>`;
+      b.title = "CSCM requires alpha > lamda; the solver rejects this deck";
+    } else {
+      b.dataset.label = label;
+      b.innerHTML = `<span class="lead">${ofatValue(g.layout, p, c)}</span>` +
+                    `<span class="trail">${c === 1 ? "default" : `×${c}`}</span>`;
+      b.addEventListener("click", () => selectOfat(p, c));
+      if (fallback === null || c === 1) fallback = c;
+    }
+    vlist.appendChild(b);
+  }
+  selectOfat(p, fallback);
+}
+
+async function selectOfat(p, mult) {
+  if (mult === null || mult === undefined) return;
+  ofatParam = p; ofatMult = mult;
+  const g = groups.ofat;
+  $$("#ofat-values .opt").forEach((b) =>
+    b.classList.toggle("selected", +b.dataset.mult === mult));
+
+  const label = g.layout.cells[`${p}|${mult}`];
   const row = g.meta.cases.find((c) => c.label === label);
   const cur = g.curves[label], base = g.curves.anchor;
 
-  const mult = +btn.dataset.mult;
-  const p = btn.dataset.param;
-  // `base` is already the default CURVE in this scope; these are values.
   const shownVal = ofatValue(g.layout, p, mult);
   const baseVal = ofatValue(g.layout, p, 1);
   $("#ofat-note").textContent = mult === 1
-    ? `All five parameters at their auto-generated CSCM default (${PARAM_LABEL[p] || p} = ${baseVal}).`
+    ? `All five parameters at their auto-generated CSCM default.`
     : `${PARAM_LABEL[p] || p} = ${shownVal}, i.e. ${mult}× its default of ${baseVal}; every other parameter unchanged.`;
 
   const spec = [["force", "force", "t_force", false],
@@ -433,7 +448,75 @@ async function selectOfat(btn) {
     }
     setSeries(ofat.charts[chartKey], ds);
   }
+  drawYieldSurface(p, mult);
   await showDamage("ofat", g, row);
+}
+
+/* --------------------------------------------------- CSCM yield surface --
+ *
+ * Ported from reference/ref_code/cscm_yield_surface.py, which the project
+ * documents in cscm_yield_surface.md. Compression is positive in J1 here,
+ * which is the convention the CSCM literature uses and the opposite of
+ * LS-DYNA's own stress output.
+ *
+ *   shear failure surface   Ff(J1) = alpha - lamda*exp(-beta*J1) + theta*J1
+ *   cap position            X(L)   = L + R*Ff(L)
+ *   cap                     Fc     = 1 for J1 <= L, else
+ *                                    1 - (J1-L)^2 / (X-L)^2
+ *   combined                Fcont  = Ff * Fc
+ *
+ * beta, R and the initial cap position are not swept, so they are held at
+ * the deck's values (card 3 field 6, and cscm_yield_surface_report.py).
+ */
+const CSCM_BETA = 1.929e-2, CSCM_R = 5.0, CSCM_KAPPA0 = 88.99;
+
+function yieldCurve({ alpha, theta, lamda }) {
+  const Ff = (J1) => alpha - lamda * Math.exp(-CSCM_BETA * J1) + theta * J1;
+  // kappa0 is taken as L directly, which is the static approximation the
+  // reference report uses (cscm_yield_surface.md, Limitations #2). The cap
+  // does not harden here because these are envelopes, not solve states.
+  const L = CSCM_KAPPA0;
+  const X = L + CSCM_R * Ff(L);
+  const pts = [];
+  const J1min = -20, J1max = X;
+  for (let i = 0; i <= 320; i++) {
+    const J1 = J1min + (J1max - J1min) * (i / 320);
+    const fc = J1 >= L ? 1 - ((J1 - L) / (X - L)) ** 2 : 1;
+    if (fc < 0) continue;
+    const v = Ff(J1) * Math.sqrt(fc);
+    if (!Number.isFinite(v) || v < 0) continue;
+    pts.push({ x: J1, y: v });
+  }
+  return pts;
+}
+
+function drawYieldSurface(p, mult) {
+  const g = groups.ofat;
+  const d = g.layout.defaults;
+  const at = (m) => ({
+    alpha: d.alpha * (p === "alpha" ? m : 1),
+    theta: d.theta * (p === "theta" ? m : 1),
+    lamda: d.lamda * (p === "lamda" ? m : 1),
+  });
+  // Only these three enter the envelope; E, GFC and GFT act on stiffness and
+  // on softening, which the surface does not describe.
+  const moves = ["alpha", "theta", "lamda"].includes(p);
+  const ds = [];
+  if (moves) {
+    // The whole family faint, the chosen one solid: the point of the panel
+    // is how far this parameter moves the envelope, not one curve alone.
+    for (const m of g.layout.cols) {
+      if (!g.layout.cells[`${p}|${m}`] || m === mult) continue;
+      ds.push({ label: `×${m}`, data: yieldCurve(at(m)),
+                borderColor: "#d7d7dc", borderWidth: 1.1 });
+    }
+  }
+  ds.push({ label: moves && mult !== 1 ? `${PARAM_LABEL[p]} ×${mult}` : "default",
+            data: yieldCurve(at(mult)), borderColor: SERIES[0], borderWidth: 2.2 });
+  setSeries(ofat.charts.yield, ds);
+  $("#ofat-yield-note").textContent = moves
+    ? `The failure envelope: inside it the material is elastic. The other multiples of ${PARAM_LABEL[p]} are drawn faint for scale.`
+    : `${PARAM_LABEL[p] || p} does not enter the yield surface — it acts on stiffness and softening, which this envelope does not describe. The curve shown is the default.`;
 }
 
 /* ==================================================== view: mesh convergence */
@@ -447,9 +530,11 @@ async function initMesh() {
   g.meta.cases.forEach((c, i) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "chip" + (c.energy_ratio < UNSOUND ? " unsound" : "");
-    b.innerHTML = `<span class="swatch" style="color:${SERIES[i % SERIES.length]}"></span>
-                   h = ${c.h_mm} mm`;
+    b.className = "opt";
+    b.innerHTML = `<span class="swatch" style="color:${SERIES[i % SERIES.length]}"></span>` +
+                  `<span class="lead">h = ${c.h_mm} mm</span>` +
+                  (c.energy_ratio < UNSOUND ? `<span class="badge">unsound</span>`
+                                            : `<span class="trail">${c.energy_ratio}</span>`);
     b.title = `${c.n_solid.toLocaleString()} concrete elements, energy ratio ${c.energy_ratio}`;
     b.dataset.label = c.label;
     b.addEventListener("click", () => toggleMesh(c.label));
@@ -482,7 +567,7 @@ async function toggleMesh(label) {
 
 async function refreshMesh() {
   const g = groups.mesh;
-  $$("#mesh-list .chip").forEach((b) => {
+  $$("#mesh-list .opt").forEach((b) => {
     b.classList.toggle("on", meshView.on.has(b.dataset.label));
     b.classList.toggle("active-3d", meshView.active === b.dataset.label);
   });
@@ -525,8 +610,9 @@ async function initCalib() {
   g.meta.cases.forEach((c, i) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "chip";
-    b.innerHTML = `<span class="swatch" style="color:${SERIES[i % SERIES.length]}"></span>${c.title}`;
+    b.className = "opt";
+    b.innerHTML = `<span class="swatch" style="color:${SERIES[i % SERIES.length]}"></span>` +
+                  `<span class="lead">${c.title}</span>`;
     b.dataset.label = c.label;
     b.addEventListener("click", () => toggleCalib(c.label));
     list.appendChild(b);
@@ -565,7 +651,7 @@ async function toggleCalib(label) {
 
 async function refreshCalib() {
   const g = groups.calib;
-  $$("#calib-list .chip").forEach((b) => {
+  $$("#calib-list .opt").forEach((b) => {
     b.classList.toggle("on", calib.on.has(b.dataset.label));
     b.classList.toggle("active-3d", calib.active === b.dataset.label);
   });

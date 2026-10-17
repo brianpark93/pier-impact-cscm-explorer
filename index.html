@@ -19,15 +19,13 @@
 </head>
 <body>
 
-<header class="hero">
-  <h1>RC Pier Impact — CSCM Explorer</h1>
-  <p class="lede">
-    Interactive companion to the CSCM calibration report. The figures that are
-    too dense to read on paper live here instead: step through them rather than
-    squint at them.
-  </p>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">🏗️</span>
+    <span class="name">RC Pier Impact — CSCM Explorer</span>
+  </div>
   <nav class="segmented" id="view-tabs" role="tablist">
-    <button type="button" data-view="ofat" class="active" role="tab">Parameter sensitivity</button>
+    <button type="button" data-view="ofat" class="active" role="tab">Sensitivity</button>
     <button type="button" data-view="mesh" role="tab">Mesh convergence</button>
     <button type="button" data-view="calib" role="tab">Calibrated model</button>
   </nav>
@@ -37,116 +35,144 @@
 
   <!-- ============================ sensitivity ============================ -->
   <section class="view active" id="view-ofat">
-    <p class="view-intro">
-      Every parameter is held at its auto-generated CSCM default and one is moved
-      at a time, on Test&nbsp;1 at mesh1x. Pick a cell to see what that change does
-      to the response and to the crack pattern. The default column is the same
-      solve in every row.
-    </p>
+    <div class="workspace">
 
-    <div class="card">
-      <div class="card-head">
-        <h2>Pick a case</h2>
-        <span class="hint">rows: parameter &middot; columns: multiple of default</span>
-      </div>
-      <div id="ofat-grid" class="grid-matrix"></div>
-      <p class="note" id="ofat-note"></p>
-    </div>
+      <aside class="sidebar">
+        <div class="side-block">
+          <h2>Parameter</h2>
+          <div id="ofat-params" class="stack"></div>
+        </div>
+        <div class="side-block">
+          <h2>Value</h2>
+          <div id="ofat-values" class="stack"></div>
+          <p class="note" id="ofat-note"></p>
+        </div>
+        <p class="side-intro">
+          Every parameter is held at its auto-generated CSCM default and one is
+          moved at a time, on Test&nbsp;1 at mesh1x. Cells marked inadmissible
+          violate CSCM's requirement that &alpha;&nbsp;&gt;&nbsp;&lambda;, and the
+          solver rejects them before it starts.
+        </p>
+      </aside>
 
-    <div class="panel-row">
-      <div class="card damage-card">
-        <div class="card-head">
-          <h2>Crack pattern</h2>
-          <span class="hint">drag to rotate &middot; scroll to zoom</span>
+      <section class="results">
+        <div class="card damage-card">
+          <div class="card-head">
+            <h2>Crack pattern</h2>
+            <span class="hint">drag to rotate &middot; scroll to zoom</span>
+          </div>
+          <div class="canvas-wrap" id="ofat-damage-wrap">
+            <canvas id="ofat-damage"></canvas>
+            <div class="impact-tag">impact direction</div>
+            <div class="nodata" hidden>Not simulated<br><span>Choose another value</span></div>
+          </div>
+          <div class="scale-bar"><span>intact</span><i></i><span>failed</span></div>
         </div>
-        <div class="canvas-wrap" id="ofat-damage-wrap">
-          <canvas id="ofat-damage"></canvas>
-          <div class="impact-tag">impact direction</div>
-          <div class="nodata" hidden>Not simulated<br><span>Choose another cell</span></div>
+        <div class="card chart-card">
+          <div class="card-head"><h2>Structural response</h2>
+            <span class="hint">default shown behind, dashed</span></div>
+          <div class="chart-grid">
+            <div><h3>Impact force (kN)</h3><div class="chart-box"><canvas id="ofat-force"></canvas></div></div>
+            <div><h3>P1 displacement (mm)</h3><div class="chart-box"><canvas id="ofat-p1"></canvas></div></div>
+            <div><h3>P4 displacement (mm)</h3><div class="chart-box"><canvas id="ofat-p4"></canvas></div></div>
+          </div>
         </div>
-        <div class="scale-bar"><span>intact</span><i></i><span>failed</span></div>
-      </div>
-      <div class="card chart-card">
-        <div class="card-head"><h2>Response</h2>
-          <span class="hint">default shown behind in grey</span></div>
-        <div class="chart-grid">
-          <div><h3>Impact force (kN)</h3><div class="chart-box"><canvas id="ofat-force"></canvas></div></div>
-          <div><h3>P1 displacement (mm)</h3><div class="chart-box"><canvas id="ofat-p1"></canvas></div></div>
-          <div><h3>P4 displacement (mm)</h3><div class="chart-box"><canvas id="ofat-p4"></canvas></div></div>
+        <div class="card full">
+          <div class="card-head"><h2>Material response</h2>
+            <span class="hint">the constitutive model itself, not the structure</span></div>
+          <div class="chart-grid">
+            <div><h3>CSCM yield surface, meridional plane</h3>
+              <div class="chart-box"><canvas id="ofat-yield"></canvas></div>
+              <p class="note" id="ofat-yield-note"></p>
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
+
     </div>
   </section>
 
   <!-- ========================== mesh convergence ========================= -->
   <section class="view" id="view-mesh">
-    <p class="view-intro">
-      Nine refinement levels at the CSCM default, named by representative element
-      length <em>h</em> = (V/N)<sup>1/3</sup>. Toggle levels on and off to see what
-      settles with refinement and what does not.
-    </p>
+    <div class="workspace">
 
-    <div class="card">
-      <div class="card-head">
-        <h2>Levels</h2>
-        <span class="hint">click to show or hide &middot; the open one is drawn in 3D</span>
-      </div>
-      <div id="mesh-list" class="chip-row"></div>
-    </div>
+      <aside class="sidebar">
+        <div class="side-block">
+          <h2>Levels</h2>
+          <div id="mesh-list" class="stack"></div>
+        </div>
+        <p class="side-intro">
+          Nine refinement levels at the CSCM default, named by representative
+          element length <em>h</em> = (V/N)<sup>1/3</sup>. Click to show or hide a
+          level; click one that is already on to draw it in 3D. Levels flagged
+          <strong>unsound</strong> lose so much energy to deleted elements that
+          they are numerical failures, not data points.
+        </p>
+      </aside>
 
-    <div class="panel-row">
-      <div class="card damage-card">
-        <div class="card-head"><h2>Crack pattern</h2><span class="hint" id="mesh-active-label"></span></div>
-        <div class="canvas-wrap" id="mesh-damage-wrap">
-          <canvas id="mesh-damage"></canvas>
-          <div class="impact-tag">impact direction</div>
-          <div class="nodata" hidden>Not available</div>
+      <section class="results">
+        <div class="card damage-card">
+          <div class="card-head"><h2>Crack pattern</h2><span class="hint" id="mesh-active-label"></span></div>
+          <div class="canvas-wrap" id="mesh-damage-wrap">
+            <canvas id="mesh-damage"></canvas>
+            <div class="impact-tag">impact direction</div>
+            <div class="nodata" hidden>Not available</div>
+          </div>
+          <div class="scale-bar"><span>intact</span><i></i><span>failed</span></div>
         </div>
-        <div class="scale-bar"><span>intact</span><i></i><span>failed</span></div>
-      </div>
-      <div class="card chart-card">
-        <div class="card-head"><h2>Response</h2><span class="hint">excursion from rest</span></div>
-        <div class="chart-grid">
-          <div><h3>Impact force (kN)</h3><div class="chart-box"><canvas id="mesh-force"></canvas></div></div>
-          <div><h3>P1 displacement (mm)</h3><div class="chart-box"><canvas id="mesh-p1"></canvas></div></div>
-          <div><h3>P4 displacement (mm)</h3><div class="chart-box"><canvas id="mesh-p4"></canvas></div></div>
+        <div class="card chart-card">
+          <div class="card-head"><h2>Response</h2><span class="hint">excursion from rest</span></div>
+          <div class="chart-grid">
+            <div><h3>Impact force (kN)</h3><div class="chart-box"><canvas id="mesh-force"></canvas></div></div>
+            <div><h3>P1 displacement (mm)</h3><div class="chart-box"><canvas id="mesh-p1"></canvas></div></div>
+            <div><h3>P4 displacement (mm)</h3><div class="chart-box"><canvas id="mesh-p4"></canvas></div></div>
+          </div>
         </div>
-      </div>
+      </section>
+
     </div>
   </section>
 
   <!-- =========================== calibrated ============================= -->
   <section class="view" id="view-calib">
-    <p class="view-intro">
-      The adopted parameter sets against the measurements. mesh1x and mesh2x are
-      calibrated separately: a set tuned on one does not transfer to the other,
-      and the ranking of the two meshes reverses depending on the parameters.
-    </p>
+    <div class="workspace">
 
-    <div class="card">
-      <div class="card-head"><h2>Cases</h2><span class="hint">click to show or hide</span></div>
-      <div id="calib-list" class="chip-row"></div>
-      <div id="calib-table"></div>
-    </div>
+      <aside class="sidebar">
+        <div class="side-block">
+          <h2>Cases</h2>
+          <div id="calib-list" class="stack"></div>
+        </div>
+        <p class="side-intro">
+          mesh1x and mesh2x are calibrated separately: a set tuned on one does
+          not transfer to the other, and which mesh looks better reverses
+          depending on the parameters.
+        </p>
+      </aside>
 
-    <div class="panel-row">
-      <div class="card damage-card">
-        <div class="card-head"><h2>Crack pattern</h2><span class="hint" id="calib-active-label"></span></div>
-        <div class="canvas-wrap" id="calib-damage-wrap">
-          <canvas id="calib-damage"></canvas>
-          <div class="impact-tag">impact direction</div>
-          <div class="nodata" hidden>Not available</div>
+      <section class="results">
+        <div class="card damage-card">
+          <div class="card-head"><h2>Crack pattern</h2><span class="hint" id="calib-active-label"></span></div>
+          <div class="canvas-wrap" id="calib-damage-wrap">
+            <canvas id="calib-damage"></canvas>
+            <div class="impact-tag">impact direction</div>
+            <div class="nodata" hidden>Not available</div>
+          </div>
+          <div class="scale-bar"><span>intact</span><i></i><span>failed</span></div>
         </div>
-        <div class="scale-bar"><span>intact</span><i></i><span>failed</span></div>
-      </div>
-      <div class="card chart-card">
-        <div class="card-head"><h2>Response</h2><span class="hint">measurement dashed</span></div>
-        <div class="chart-grid">
-          <div><h3>Impact force (kN)</h3><div class="chart-box"><canvas id="calib-force"></canvas></div></div>
-          <div><h3>P1 displacement (mm)</h3><div class="chart-box"><canvas id="calib-p1"></canvas></div></div>
-          <div><h3>P4 displacement (mm)</h3><div class="chart-box"><canvas id="calib-p4"></canvas></div></div>
+        <div class="card chart-card">
+          <div class="card-head"><h2>Response</h2><span class="hint">measurement dashed</span></div>
+          <div class="chart-grid">
+            <div><h3>Impact force (kN)</h3><div class="chart-box"><canvas id="calib-force"></canvas></div></div>
+            <div><h3>P1 displacement (mm)</h3><div class="chart-box"><canvas id="calib-p1"></canvas></div></div>
+            <div><h3>P4 displacement (mm)</h3><div class="chart-box"><canvas id="calib-p4"></canvas></div></div>
+          </div>
         </div>
-      </div>
+        <div class="card full">
+          <div class="card-head"><h2>Scores</h2><span class="hint">repeat means, not single solves</span></div>
+          <div id="calib-table"></div>
+        </div>
+      </section>
+
     </div>
   </section>
 

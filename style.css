@@ -1,7 +1,11 @@
 /* RC Pier Impact -- CSCM Explorer
    Light, typographic, generous whitespace. One accent colour; everything else
    is ink on paper. Cards carry a hairline rather than a shadow so the page
-   stays flat under bright light. */
+   stays flat under bright light.
+
+   Layout is an app shell, not a document: a narrow left rail holds everything
+   the reader sets, scrolling on its own, and the whole of the right side is
+   given to the results. The controls are small; the results are the point. */
 
 :root {
   --bg:        #fbfbfd;
@@ -16,7 +20,9 @@
   --warn:      #b25000;
   --radius:    18px;
   --radius-sm: 12px;
-  --maxw:      1180px;
+  --topbar-h:  58px;
+  --rail:      272px;
+  --gap:       20px;
 }
 
 * { box-sizing: border-box; }
@@ -34,112 +40,212 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ------------------------------------------------------------------ hero */
-.hero {
-  max-width: var(--maxw);
-  margin: 0 auto;
-  padding: 72px 28px 28px;
-  text-align: center;
+/* ---------------------------------------------------------------- topbar */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 24px;
+  background: rgba(251, 251, 253, .82);
+  backdrop-filter: saturate(180%) blur(18px);
+  -webkit-backdrop-filter: saturate(180%) blur(18px);
+  border-bottom: 1px solid var(--line-soft);
 }
 
-.hero h1 {
-  margin: 0;
-  font-size: clamp(32px, 5vw, 52px);
-  line-height: 1.07;
-  letter-spacing: -0.015em;
-  font-weight: 600;
-}
-
-.lede {
-  max-width: 660px;
-  margin: 18px auto 0;
-  font-size: 17px;
-  line-height: 1.55;
-  color: var(--ink-2);
+.brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.brand .mark { font-size: 17px; }
+.brand .name {
+  font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 /* ------------------------------------------------------ segmented control */
 .segmented {
   display: inline-flex;
-  margin-top: 34px;
   padding: 3px;
   background: #ededf0;
   border-radius: 980px;
   gap: 2px;
-  max-width: 100%;
-  flex-wrap: wrap;
-  justify-content: center;
+  flex-shrink: 0;
 }
 
 .segmented button {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: var(--ink-2);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  padding: 9px 20px;
-  border-radius: 980px;
-  cursor: pointer;
-  transition: background .18s ease, color .18s ease;
-  white-space: nowrap;
+  appearance: none; border: 0; background: transparent;
+  color: var(--ink-2); font: inherit; font-size: 13px; font-weight: 500;
+  padding: 7px 16px; border-radius: 980px; cursor: pointer;
+  transition: background .18s ease, color .18s ease; white-space: nowrap;
 }
 
 .segmented button:hover { color: var(--ink); }
 
 .segmented button.active {
-  background: var(--card);
-  color: var(--ink);
+  background: var(--card); color: var(--ink);
   box-shadow: 0 1px 3px rgba(0,0,0,.09);
 }
 
-/* ------------------------------------------------------------------ main */
-main {
-  max-width: var(--maxw);
-  margin: 0 auto;
-  padding: 24px 28px 80px;
-}
+/* ------------------------------------------------------------------ shell */
+main { padding: var(--gap) 24px 0; }
 
 .view { display: none; }
-.view.active { display: block; animation: rise .26s ease; }
+.view.active { display: block; animation: rise .22s ease; }
 
 @keyframes rise {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(5px); }
   to   { opacity: 1; transform: none; }
 }
 
-.view-intro {
-  max-width: 720px;
-  margin: 8px auto 30px;
-  text-align: center;
-  color: var(--ink-2);
-  font-size: 15px;
+.workspace {
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
 }
 
-.view-intro em { font-style: italic; }
+/* ---------------------------------------------------------------- sidebar */
+.sidebar {
+  position: sticky;
+  top: calc(var(--topbar-h) + var(--gap));
+  /* Its own scroll: the rail may run long without pushing the results down,
+     and the results never move just because the rail was scrolled. */
+  max-height: calc(100vh - var(--topbar-h) - var(--gap) * 2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
 
-/* ----------------------------------------------------------------- cards */
+.sidebar::-webkit-scrollbar { width: 8px; }
+.sidebar::-webkit-scrollbar-thumb { background: #dcdce1; border-radius: 4px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+
+.side-block {
+  background: var(--card);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  padding: 14px 14px 16px;
+}
+
+.side-block h2 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.side-intro {
+  margin: 0;
+  padding: 0 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.side-intro em { font-style: italic; }
+.side-intro strong { color: var(--warn); font-weight: 600; }
+
+.note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+/* --------------------------------------------------------- stacked picker */
+.stack { display: flex; flex-direction: column; gap: 5px; }
+
+.opt {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-2);
+  border-radius: 9px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  transition: background .14s ease, color .14s ease;
+}
+
+.opt:hover:not(:disabled) { background: #f3f3f6; color: var(--ink); }
+
+.opt .swatch {
+  width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto;
+  background: currentColor; opacity: .3;
+}
+
+.opt .lead { flex: 1; min-width: 0; }
+.opt .trail { color: var(--ink-3); font-size: 11.5px; flex: 0 0 auto; }
+
+.opt.selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 500;
+}
+.opt.selected .trail { color: rgba(255,255,255,.78); }
+.opt.selected .swatch { opacity: 1; }
+
+.opt.on { color: var(--ink); background: #f3f3f6; }
+.opt.on .swatch { opacity: 1; }
+
+.opt.active-3d { border-color: var(--accent); background: var(--accent-sf); color: var(--ink); }
+
+.opt:disabled { color: #b9b9c0; cursor: not-allowed; }
+.opt:disabled .trail { color: #c6c6cc; }
+
+.badge {
+  font-size: 10px;
+  color: var(--warn);
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  padding: 0 4px;
+  flex: 0 0 auto;
+}
+
+/* ---------------------------------------------------------------- results */
+.results {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+  padding-bottom: 40px;
+}
+
+.results .card.full { grid-column: 1 / -1; }
+
 .card {
   background: var(--card);
   border: 1px solid var(--line-soft);
   border-radius: var(--radius);
-  padding: 22px 24px 24px;
-  margin-bottom: 22px;
+  padding: 18px 20px 20px;
 }
 
 .card-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 16px;
+  gap: 12px;
+  margin-bottom: 14px;
   flex-wrap: wrap;
 }
 
 .card h2 {
   margin: 0;
-  font-size: 19px;
+  font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -149,126 +255,19 @@ main {
   font-size: 12px;
   font-weight: 500;
   color: var(--ink-2);
-  letter-spacing: .01em;
 }
 
-.hint { font-size: 12.5px; color: var(--ink-3); }
+.hint { font-size: 12px; color: var(--ink-3); }
 
-.note {
-  margin: 14px 0 0;
-  font-size: 13px;
-  color: var(--ink-2);
-  min-height: 1.2em;
+@media (max-width: 1100px) {
+  .results { grid-template-columns: 1fr; }
 }
 
-.panel-row {
-  display: grid;
-  grid-template-columns: minmax(300px, 390px) 1fr;
-  gap: 22px;
-  align-items: start;
-}
-
-@media (max-width: 900px) {
-  .panel-row { grid-template-columns: 1fr; }
-  .hero { padding-top: 48px; }
-}
-
-/* ---------------------------------------------------------- ofat matrix */
-.grid-matrix {
-  display: grid;
-  gap: 6px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-
-.grid-matrix .gm-head,
-.grid-matrix .gm-row-label {
-  font-size: 12.5px;
-  color: var(--ink-2);
-  display: flex;
-  align-items: center;
-  font-weight: 500;
-}
-
-.grid-matrix .gm-head { justify-content: center; }
-.grid-matrix .gm-row-label { justify-content: flex-end; padding-right: 10px; }
-
-.gm-cell {
-  appearance: none;
-  border: 1px solid var(--line);
-  background: var(--card);
-  color: var(--ink);
-  border-radius: var(--radius-sm);
-  padding: 11px 6px;
-  font: inherit;
-  font-size: 12.5px;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-  transition: background .15s ease, border-color .15s ease, color .15s ease;
-  min-width: 72px;
-}
-
-.gm-cell:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-
-.gm-cell.selected {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-  font-weight: 600;
-}
-
-.gm-cell.is-default { border-style: dashed; }
-
-.gm-cell:disabled {
-  background: #f5f5f7;
-  color: var(--ink-3);
-  cursor: not-allowed;
-  border-style: dotted;
-}
-
-/* ------------------------------------------------------------- chip rows */
-.chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
-
-.chip {
-  appearance: none;
-  border: 1px solid var(--line);
-  background: var(--card);
-  color: var(--ink-2);
-  border-radius: 980px;
-  padding: 7px 15px;
-  font: inherit;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  transition: background .15s ease, border-color .15s ease, color .15s ease;
-}
-
-.chip:hover { border-color: var(--accent); color: var(--ink); }
-
-.chip .swatch {
-  width: 9px; height: 9px; border-radius: 50%;
-  background: currentColor; opacity: .25;
-}
-
-.chip.on { color: var(--ink); border-color: var(--line); background: #fff; }
-.chip.on .swatch { opacity: 1; }
-
-.chip.active-3d {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-sf);
-}
-
-.chip.unsound::after {
-  content: "unsound";
-  font-size: 10.5px;
-  color: var(--warn);
-  border: 1px solid currentColor;
-  border-radius: 5px;
-  padding: 0 4px;
-  margin-left: 2px;
+@media (max-width: 860px) {
+  .workspace { grid-template-columns: 1fr; }
+  .sidebar { position: static; max-height: none; overflow: visible; }
+  .topbar { flex-wrap: wrap; height: auto; padding: 10px 16px; }
+  main { padding-inline: 16px; }
 }
 
 /* ---------------------------------------------------------------- canvas */
@@ -285,9 +284,9 @@ main {
 .canvas-wrap canvas { width: 100%; height: 100%; display: block; }
 
 .impact-tag {
-  position: absolute; left: 12px; top: 12px;
-  font-size: 11.5px; color: var(--ink-2);
-  background: rgba(255,255,255,.82);
+  position: absolute; left: 11px; top: 11px;
+  font-size: 11px; color: var(--ink-2);
+  background: rgba(255,255,255,.84);
   border: 1px solid var(--line-soft);
   border-radius: 7px; padding: 3px 8px;
   pointer-events: none;
@@ -325,18 +324,19 @@ main {
 }
 
 /* ---------------------------------------------------------------- charts */
-.chart-grid { display: grid; gap: 20px; }
+.chart-grid { display: grid; gap: 18px; }
 .chart-grid > div { min-width: 0; }
+.chart-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
 /* Chart.js with maintainAspectRatio:false measures the canvas's PARENT. If
    that parent is sized by its content the two chase each other and the chart
-   grows without bound on every frame, which is what a canvas left to size
-   itself here did. The box below is the fixed thing it measures against. */
-.chart-box { position: relative; height: 200px; width: 100%; }
+   grows without bound on every frame. The box below is the fixed thing it
+   measures against. */
+.chart-box { position: relative; height: 230px; width: 100%; }
 .chart-box canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
 
 /* ----------------------------------------------------------------- table */
-#calib-table { margin-top: 18px; overflow-x: auto; }
+#calib-table { overflow-x: auto; }
 
 table {
   border-collapse: collapse;
@@ -364,17 +364,15 @@ tbody tr:last-child td { border-bottom: 0; }
 
 /* ---------------------------------------------------------------- footer */
 footer {
-  max-width: var(--maxw);
-  margin: 0 auto;
-  padding: 30px 28px 70px;
+  padding: 26px 24px 60px;
   border-top: 1px solid var(--line-soft);
   color: var(--ink-2);
-  font-size: 13px;
+  font-size: 12.5px;
   text-align: center;
 }
 
-footer p { margin: 6px 0; }
-footer .muted { color: var(--ink-3); font-size: 12px; }
+footer p { margin: 5px 0; }
+footer .muted { color: var(--ink-3); font-size: 11.5px; }
 
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
