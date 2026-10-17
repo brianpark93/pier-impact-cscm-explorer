@@ -78,14 +78,22 @@
           </div>
         </div>
         <div class="card full">
-          <div class="card-head"><h2>Material response</h2>
-            <span class="hint">the constitutive model itself, not the structure</span></div>
-          <div class="chart-grid">
-            <div><h3>CSCM yield surface, meridional plane</h3>
-              <div class="chart-box"><canvas id="ofat-yield"></canvas></div>
-              <p class="note" id="ofat-yield-note"></p>
-            </div>
+          <div class="card-head">
+            <h2>Material response</h2>
+            <nav class="segmented small" id="ofat-mode">
+              <button type="button" data-mode="tension" class="active">Tension</button>
+              <button type="button" data-mode="compression">Compression</button>
+            </nav>
           </div>
+          <div class="chart-grid three">
+            <div><h3>Yield surface, meridional plane</h3>
+              <div class="chart-box"><canvas id="ofat-yield"></canvas></div></div>
+            <div><h3>Uniaxial stress &ndash; strain</h3>
+              <div class="chart-box"><canvas id="ofat-ss"></canvas></div></div>
+            <div><h3>Damage</h3>
+              <div class="chart-box"><canvas id="ofat-dmg"></canvas></div></div>
+          </div>
+          <p class="note" id="ofat-mat-note"></p>
         </div>
       </section>
 

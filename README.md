@@ -19,6 +19,20 @@ here instead, where they can be stepped through rather than squinted at.
 Every view gives the contact force, the P1 (top) and P4 (base) lateral
 displacements, and a 3D per-face damage view of the pier.
 
+**Parameter sensitivity** additionally shows the material response: the CSCM
+failure envelope in the J1-sqrt(J2) plane, and the uniaxial stress-strain and
+damage curves of a single element under prescribed straining, in tension and
+in compression.
+
+The envelope is computed in the browser from the documented CSCM formula
+(ported from the project's `cscm_yield_surface.py` and checked against it to
+0.0 MPa). The stress-strain and damage curves are *not* a re-derivation of
+the CSCM equations: they come from 42 single-element LS-DYNA solves on a
+40 mm element -- the representative element length of mesh1x, since CSCM
+regularises softening on element size. Asking the solver to evaluate its own
+material model avoids transcribing a damage formulation that is not published
+in this repository.
+
 Each tab is linkable: append `#ofat`, `#mesh` or `#calib`.
 
 ## Headline numbers
@@ -45,6 +59,8 @@ LS-DYNA solves by `export_site_data_v2.py` in the solver repository:
   `uint32` quad indices, surface-only and re-indexed
 - `damage_*.bin` — one `uint8` per surface face per case, concatenated
 - `exp_ref.json` — the digitised measurements
+- `element/` — single-element stress-strain and damage curves, per parameter
+  and load direction
 
 About 5 MB in total.
 

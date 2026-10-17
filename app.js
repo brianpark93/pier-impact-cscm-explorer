@@ -352,7 +352,7 @@ function ofatValue(layout, param, mult) {
   return (base * mult * u.scale).toFixed(u.dp) + u.unit;
 }
 
-let ofatParam = null, ofatMult = null;
+let ofatParam = null, ofatMult = null, ofatMode = "tension";
 
 async function initOfat() {
   const g = await loadGroup("ofat", ["layout.json"]);
@@ -376,7 +376,19 @@ async function initOfat() {
   ofat.charts.force = makeChart($("#ofat-force"), "time (ms)", 20);
   ofat.charts.p1 = makeChart($("#ofat-p1"), "time (ms)", 150);
   ofat.charts.p4 = makeChart($("#ofat-p4"), "time (ms)", 150);
+  ofat.element = await loadGroup("element").catch(() => null);
   ofat.charts.yield = makeChart($("#ofat-yield"), "J₁ (MPa)", undefined, undefined);
+  ofat.charts.ss = makeChart($("#ofat-ss"), "strain (-)", undefined, undefined);
+  ofat.charts.dmg = makeChart($("#ofat-dmg"), "strain (-)", undefined, undefined);
+  ofat.charts.ss.options.scales.y.title = {
+    display: true, text: "σₓₓ (MPa)", color: "#86868b" };
+  ofat.charts.dmg.options.scales.y.title = {
+    display: true, text: "damage (-)", color: "#86868b" };
+  $$("#ofat-mode button").forEach((b) => b.addEventListener("click", () => {
+    ofatMode = b.dataset.mode;
+    $$("#ofat-mode button").forEach((x) => x.classList.toggle("active", x === b));
+    drawMaterial(ofatParam, ofatMult);
+  }));
   ofat.charts.yield.options.scales.y.title = {
     display: true, text: "√J₂ (MPa)", color: "#86868b" };
 
@@ -448,7 +460,7 @@ async function selectOfat(p, mult) {
     }
     setSeries(ofat.charts[chartKey], ds);
   }
-  drawYieldSurface(p, mult);
+  drawMaterial(p, mult);
   await showDamage("ofat", g, row);
 }
 
@@ -490,6 +502,60 @@ function yieldCurve({ alpha, theta, lamda }) {
   return pts;
 }
 
+/** Stress-strain and damage from the single-element solves.
+ *
+ *  These are LS-DYNA evaluating its own material model on one 40 mm element
+ *  under prescribed straining -- not the CSCM equations re-derived here. The
+ *  element size matches mesh1x because CSCM regularises softening on it.
+ */
+function drawElementPanels(p, mult) {
+  const g = ofat.element;
+  if (!g) return;
+  const key = (m) => {
+    const cse = m === 1 ? "anchor" : `${p}_x${m}`;
+    return `${cse}__${ofatMode}`;
+  };
+  const avail = (m) => g.curves[key(m)] ? key(m) : null;
+
+  for (const [chart, field] of [[ofat.charts.ss, "stress"], [ofat.charts.dmg, "damage"]]) {
+    const ds = [];
+    for (const m of groups.ofat.layout.cols) {
+      if (m === mult) continue;
+      const k = avail(m);
+      if (!k) continue;
+      const c = g.curves[k];
+      ds.push({ label: `×${m}`,
+                data: c.strain.map((x, i) => ({ x, y: c[field][i] })),
+                borderColor: "#d7d7dc", borderWidth: 1.1 });
+    }
+    const k = avail(mult);
+    if (k) {
+      const c = g.curves[k];
+      ds.push({ label: mult === 1 ? "default" : `${PARAM_LABEL[p]} ×${mult}`,
+                data: c.strain.map((x, i) => ({ x, y: c[field][i] })),
+                borderColor: SERIES[0], borderWidth: 2.2 });
+    }
+    setSeries(chart, ds);
+  }
+
+  const c = g.curves[avail(mult)];
+  const note = [];
+  if (c) {
+    note.push(`Peak |σₓₓ| = ${c.peak_stress.toFixed(2)} MPa`);
+    if (c.E_secant) note.push(`initial secant modulus ${Math.round(c.E_secant).toLocaleString()} MPa`);
+    note.push(c.eroded
+      ? `the element is deleted at strain ${c.erode_strain.toExponential(2)} (ERODE = 1.0), which is where the curves stop`
+      : "the element survives the imposed strain");
+  }
+  $("#ofat-mat-note").textContent = note.join(" · ") +
+    ". One 40 mm element under prescribed uniaxial straining, the same element size as mesh1x.";
+}
+
+function drawMaterial(p, mult) {
+  drawYieldSurface(p, mult);
+  drawElementPanels(p, mult);
+}
+
 function drawYieldSurface(p, mult) {
   const g = groups.ofat;
   const d = g.layout.defaults;
@@ -514,9 +580,6 @@ function drawYieldSurface(p, mult) {
   ds.push({ label: moves && mult !== 1 ? `${PARAM_LABEL[p]} ×${mult}` : "default",
             data: yieldCurve(at(mult)), borderColor: SERIES[0], borderWidth: 2.2 });
   setSeries(ofat.charts.yield, ds);
-  $("#ofat-yield-note").textContent = moves
-    ? `The failure envelope: inside it the material is elastic. The other multiples of ${PARAM_LABEL[p]} are drawn faint for scale.`
-    : `${PARAM_LABEL[p] || p} does not enter the yield surface — it acts on stiffness and softening, which this envelope does not describe. The curve shown is the default.`;
 }
 
 /* ==================================================== view: mesh convergence */
@@ -727,7 +790,7 @@ function main() {
   for (const k of Object.keys(INIT)) views[k] = new PierView($(`#${k}-damage`));
   $$("#view-tabs button").forEach((b) =>
     b.addEventListener("click", () => showView(b.dataset.view)));
-  $("#build-stamp").textContent = "Data exported 2026-10-16.";
+  $("#build-stamp").textContent = "Data exported 2026-10-17.";
   // The view lives in the hash so a tab can be linked to directly.
   window.addEventListener("hashchange", () => showView(location.hash.slice(1), false));
   showView(location.hash.slice(1) || "ofat");

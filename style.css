@@ -327,6 +327,11 @@ main { padding: var(--gap) 24px 0; }
 .chart-grid { display: grid; gap: 18px; }
 .chart-grid > div { min-width: 0; }
 .chart-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.chart-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1400px) { .chart-grid.three { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 950px)  { .chart-grid.three { grid-template-columns: 1fr; } }
+
+.segmented.small button { font-size: 12px; padding: 5px 13px; }
 
 /* Chart.js with maintainAspectRatio:false measures the canvas's PARENT. If
    that parent is sized by its content the two chase each other and the chart
