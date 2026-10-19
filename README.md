@@ -16,8 +16,11 @@ here instead, where they can be stepped through rather than squinted at.
 | **Mesh convergence** | Nine refinement levels at the default, *h* = 174 → 13 mm, each on its own mesh. Two levels are flagged `unsound`: their energy balance falls below 0.40, so they are numerical failures rather than data points. |
 | **Calibrated model** | The adopted sets — mesh1x, mesh2x, and the default for contrast — against the measurements, both tests. |
 
-Every view gives the contact force, the P1 (top) and P4 (base) lateral
-displacements, and a 3D per-face damage view of the pier.
+Every view gives the contact force, the P1 and P4 lateral
+displacements, and a 3D per-face damage view of the pier. P1 sits near the
+pier top (4800 mm) and P4 at the impact height (1500 mm) on a 4840 mm pier,
+so the two move in opposite directions early in the response: the strike is
+low, and the pier above it swings back before the whole column follows.
 
 **Parameter sensitivity** additionally shows the material response: the CSCM
 failure envelope in the J1-sqrt(J2) plane, and the uniaxial stress-strain and
