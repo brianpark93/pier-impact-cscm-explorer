@@ -342,6 +342,9 @@ main { padding: var(--gap) 24px 0; }
 
 /* ----------------------------------------------------------------- table */
 #calib-table { overflow-x: auto; }
+/* Two stacked tables since 2026-10-29: scores, then the parameter set that
+   produced them. Without this they run together. */
+#calib-table table + table { margin-top: 18px; }
 
 table {
   border-collapse: collapse;

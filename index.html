@@ -49,7 +49,10 @@
         </div>
         <p class="side-intro">
           Every parameter is held at its auto-generated CSCM default and one is
-          moved at a time, on Test&nbsp;1 at mesh1x. Cells marked inadmissible
+          moved at a time, on Test&nbsp;1. This is a screening study, so it runs
+          on a coarse mesh (<i>h</i>&nbsp;=&nbsp;40&nbsp;mm) rather than on the
+          adopted one: it is read for which parameters matter and in which
+          direction, not for its absolute scores. Cells marked inadmissible
           violate CSCM's requirement that &alpha;&nbsp;&gt;&nbsp;&lambda;, and the
           solver rejects them before it starts.
         </p>
@@ -151,9 +154,11 @@
           <div id="calib-list" class="stack"></div>
         </div>
         <p class="side-intro">
-          mesh1x and mesh2x are calibrated separately: a set tuned on one does
-          not transfer to the other, and which mesh looks better reverses
-          depending on the parameters.
+          One parameter set is fitted to both tests at once, on the adopted
+          mesh (<i>h</i>&nbsp;=&nbsp;20&nbsp;mm). The two tests differ only in
+          impact velocity, so a set that had to change between them would not
+          be a material calibration. The auto-generated default is drawn
+          alongside for contrast, on the same mesh and the same score.
         </p>
       </aside>
 
@@ -174,9 +179,17 @@
             <div><h3>P1 displacement, near top &middot; 4800 mm (mm)</h3><div class="chart-box"><canvas id="calib-p1"></canvas></div></div>
             <div><h3>P4 displacement, impact height &middot; 1500 mm (mm)</h3><div class="chart-box"><canvas id="calib-p4"></canvas></div></div>
           </div>
+          <p class="note">
+            Displacements are low-passed at 20&nbsp;Hz and drawn from the
+            physical rest position, which is zero &mdash; the same baseline the
+            score measures them against, not the first sample of the filtered
+            trace. The digitised measurements carry no absolute level and are
+            centred on their own mid-range, so amplitude and period are
+            comparable between the curves but absolute offset is not.
+          </p>
         </div>
         <div class="card full">
-          <div class="card-head"><h2>Scores</h2><span class="hint">repeat means, not single solves</span></div>
+          <div class="card-head"><h2>Scores</h2><span class="hint">five repeats per test, not single solves</span></div>
           <div id="calib-table"></div>
         </div>
       </section>

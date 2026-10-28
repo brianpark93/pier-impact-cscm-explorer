@@ -3,7 +3,7 @@
  * Three views over three exported datasets (see export_site_data_v2.py):
  *   ofat   one parameter moved at a time about the CSCM default
  *   mesh   nine refinement levels at the default
- *   calib  the adopted sets against the measurements
+ *   calib  the adopted set against the auto-generated default, on mesh2x
  *
  * Geometry arrives as binary rather than JSON: float32 vertices and uint32
  * faces, surface only and re-indexed. The damage field is one uint8 per face
@@ -260,11 +260,16 @@ function makeChart(canvas, xLabel, xMax = undefined, xMin = 0) {
 }
 
 /** Curve payloads store t in seconds; charts want milliseconds. */
-function points(t, y, zeroBase) {
+// 2026-10-29: this used to subtract y[0] from the displacement traces. That is
+// wrong and it was the same bug the scoring code carried: the baseline is the
+// physical rest state, which is zero, not the first sample of a 20 Hz
+// zero-phase filtered trace. The filter kernel is ~50 ms wide against a 1.6 ms
+// pre-impact record, so y[0] is already contaminated by the impact. Subtracting
+// it made the charts show a different quantity than the scores measured.
+function points(t, y) {
   if (!t || !y) return [];
-  const y0 = zeroBase ? y[0] : 0;
   const out = new Array(t.length);
-  for (let i = 0; i < t.length; i++) out[i] = { x: t[i] * 1e3, y: y[i] - y0 };
+  for (let i = 0; i < t.length; i++) out[i] = { x: t[i] * 1e3, y: y[i] };
   return out;
 }
 
@@ -452,18 +457,18 @@ async function selectOfat(p, mult) {
     ? `All five parameters at their auto-generated CSCM default.`
     : `${PARAM_LABEL[p] || p} = ${shownVal}, i.e. ${mult}× its default of ${baseVal}; every other parameter unchanged.`;
 
-  const spec = [["force", "force", "t_force", false],
-                ["p1", "p1", "t_p1", true],
-                ["p4", "p4", "t_p4", true]];
-  for (const [chartKey, yKey, tKey, zero] of spec) {
+  const spec = [["force", "force", "t_force"],
+                ["p1", "p1", "t_p1"],
+                ["p4", "p4", "t_p4"]];
+  for (const [chartKey, yKey, tKey] of spec) {
     const ds = [];
     if (base && mult !== 1) {
-      ds.push({ label: "default", data: points(base[tKey], base[yKey], zero),
+      ds.push({ label: "default", data: points(base[tKey], base[yKey]),
                 borderColor: DEFAULT_GREY, borderWidth: 1.4, borderDash: [4, 3] });
     }
     if (cur) {
       ds.push({ label: mult === 1 ? "default" : `${PARAM_LABEL[p] || p} ×${mult}`,
-                data: points(cur[tKey], cur[yKey], zero),
+                data: points(cur[tKey], cur[yKey]),
                 borderColor: SERIES[0], borderWidth: 2 });
     }
     setSeries(ofat.charts[chartKey], ds);
@@ -514,7 +519,9 @@ function yieldCurve({ alpha, theta, lamda }) {
  *
  *  These are LS-DYNA evaluating its own material model on one 40 mm element
  *  under prescribed straining -- not the CSCM equations re-derived here. The
- *  element size matches mesh1x because CSCM regularises softening on it.
+ *  element size is that of the coarse screening mesh this sensitivity study
+ *  was run on, because CSCM regularises softening on element size and the
+ *  probe has to match the mesh being probed.
  */
 function drawElementPanels(p, mult) {
   const g = ofat.element;
@@ -572,7 +579,8 @@ function drawElementPanels(p, mult) {
   }
   $("#ofat-mat-note").textContent = note.join(" · ") +
     ". One 40 mm element under prescribed uniaxial straining, the same element " +
-    "size as mesh1x. The axes follow the selected case; faint curves are the " +
+    "size as the coarse screening mesh this study runs on. The axes follow the " +
+    "selected case; faint curves are the " +
     "other multiples and may run off the chart.";
 }
 
@@ -632,9 +640,12 @@ async function initMesh() {
   meshView.charts.p1 = makeChart($("#mesh-p1"), "time (ms)", 150);
   meshView.charts.p4 = makeChart($("#mesh-p4"), "time (ms)", 150);
 
-  // Start with the coarsest, mesh1x and the finest: enough to show the trend
-  // without nine curves on top of each other.
-  const picks = [g.meta.cases[0], g.meta.cases[4], g.meta.cases.at(-1)].filter(Boolean);
+  // Start with the coarsest, the adopted level and the finest: enough to show
+  // the trend without nine curves on top of each other. The middle pick is
+  // found by h rather than by index, so it follows the adopted model instead
+  // of a position in the list.
+  const adopted = g.meta.cases.find((c) => c.h_mm === 20);
+  const picks = [g.meta.cases[0], adopted, g.meta.cases.at(-1)].filter(Boolean);
   picks.forEach((c) => meshView.on.add(c.label));
   meshView.active = picks.at(-1).label;
   await refreshMesh();
@@ -659,16 +670,16 @@ async function refreshMesh() {
     b.classList.toggle("on", meshView.on.has(b.dataset.label));
     b.classList.toggle("active-3d", meshView.active === b.dataset.label);
   });
-  const spec = [["force", "force", "t_force", false],
-                ["p1", "p1", "t_p1", true],
-                ["p4", "p4", "t_p4", true]];
-  for (const [chartKey, yKey, tKey, zero] of spec) {
+  const spec = [["force", "force", "t_force"],
+                ["p1", "p1", "t_p1"],
+                ["p4", "p4", "t_p4"]];
+  for (const [chartKey, yKey, tKey] of spec) {
     const ds = [];
     g.meta.cases.forEach((c, i) => {
       if (!meshView.on.has(c.label)) return;
       const cu = g.curves[c.label];
       if (!cu) return;
-      ds.push({ label: `h = ${c.h_mm} mm`, data: points(cu[tKey], cu[yKey], zero),
+      ds.push({ label: `h = ${c.h_mm} mm`, data: points(cu[tKey], cu[yKey]),
                 borderColor: SERIES[i % SERIES.length],
                 borderWidth: c.label === meshView.active ? 2.4 : 1.5,
                 borderDash: c.energy_ratio < UNSOUND ? [5, 3] : [] });
@@ -686,9 +697,17 @@ async function refreshMesh() {
 const calib = { on: new Set(), active: null, charts: {} };
 
 const CALIB_SCORES = [
-  ["mesh1x adopted", "118.1 ± 1.4", "49.4 ± 1.3", "68.7 ± 0.9", "9"],
-  ["mesh2x adopted", "127.7 ± 5.0", "41.2 ± 2.4", "86.4 ± 4.6", "11"],
-  ["CSCM default (mesh1x)", "262.3 ± 21.7", "139.8 ± 3.9", "122.5 ± 23.4", "5"],
+  ["Calibrated", "96.6 ± 2.4", "60.1 ± 1.1", "36.5 ± 2.1", "5"],
+  ["CSCM auto default", "319.3 ± 18.4", "218.1 ± 11.8", "101.1 ± 14.2", "5"],
+];
+
+// theta, alpha, E, GFC, GFT -- the five parameters the joint search moves.
+const CALIB_PARAMS = [
+  ["θ", "0.2851", "0.1909", "−33%"],
+  ["α", "13.96", "14.815", "+6%"],
+  ["E (GPa)", "25.23", "18.36", "−27%"],
+  ["GFC (MPa)", "4.515", "8.525", "+89%"],
+  ["GFT (MPa)", "0.04515", "0.12694", "+181%"],
 ];
 
 async function initCalib() {
@@ -712,8 +731,17 @@ async function initCalib() {
      <th>C<sub>Test2</sub></th><th>repeats</th></tr></thead><tbody>` +
     CALIB_SCORES.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td>
      <td>${r[3]}</td><td>${r[4]}</td></tr>`).join("") + "</tbody>";
+
+  const p = document.createElement("table");
+  p.innerHTML =
+    `<thead><tr><th>Parameter</th><th>default</th><th>calibrated</th>
+     <th>change</th></tr></thead><tbody>` +
+    CALIB_PARAMS.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td>
+     <td>${r[2]}</td><td>${r[3]}</td></tr>`).join("") + "</tbody>";
+
   $("#calib-table").innerHTML = "";
   $("#calib-table").appendChild(t);
+  $("#calib-table").appendChild(p);
 
   const start = g.meta.cases.filter((c) => c.test === 1);
   start.forEach((c) => calib.on.add(c.label));
@@ -743,22 +771,22 @@ async function refreshCalib() {
     b.classList.toggle("on", calib.on.has(b.dataset.label));
     b.classList.toggle("active-3d", calib.active === b.dataset.label);
   });
-  const spec = [["force", "force", "t_force", false],
-                ["p1", "p1", "t_p1", true],
-                ["p4", "p4", "t_p4", true]];
+  const spec = [["force", "force", "t_force"],
+                ["p1", "p1", "t_p1"],
+                ["p4", "p4", "t_p4"]];
   const CHANNEL = { force: "force", p1: "P1", p4: "P4" };
   // Only one measurement can be drawn per chart; use the test the highlighted
   // case belongs to, so the dashed line always matches what is in front.
   const activeRow = g.meta.cases.find((c) => c.label === calib.active);
   const shownTests = new Set(g.meta.cases.filter((c) => calib.on.has(c.label)).map((c) => c.test));
   const expTest = activeRow ? activeRow.test : [...shownTests][0];
-  for (const [chartKey, yKey, tKey, zero] of spec) {
+  for (const [chartKey, yKey, tKey] of spec) {
     const ds = [];
     g.meta.cases.forEach((c, i) => {
       if (!calib.on.has(c.label)) return;
       const cu = g.curves[c.label];
       if (!cu) return;
-      ds.push({ label: c.title, data: points(cu[tKey], cu[yKey], zero),
+      ds.push({ label: c.title, data: points(cu[tKey], cu[yKey]),
                 borderColor: SERIES[i % SERIES.length],
                 borderWidth: c.label === calib.active ? 2.4 : 1.5 });
     });
@@ -815,7 +843,7 @@ function main() {
   for (const k of Object.keys(INIT)) views[k] = new PierView($(`#${k}-damage`));
   $$("#view-tabs button").forEach((b) =>
     b.addEventListener("click", () => showView(b.dataset.view)));
-  $("#build-stamp").textContent = "Data exported 2026-10-17.";
+  $("#build-stamp").textContent = "Data exported 2026-10-29.";
   // The view lives in the hash so a tab can be linked to directly.
   window.addEventListener("hashchange", () => showView(location.hash.slice(1), false));
   showView(location.hash.slice(1) || "ofat");

@@ -12,9 +12,9 @@ here instead, where they can be stepped through rather than squinted at.
 
 | View | What it shows |
 |---|---|
-| **Parameter sensitivity** | One parameter moved at a time about the CSCM default (×0.25 … ×4), on Test 1 at mesh1x. 21 solves. Four cells are empty because CSCM requires α > λ and the solver rejects the rest at initialisation. |
-| **Mesh convergence** | Nine refinement levels at the default, *h* = 174 → 13 mm, each on its own mesh. Two levels are flagged `unsound`: their energy balance falls below 0.40, so they are numerical failures rather than data points. |
-| **Calibrated model** | The adopted sets — mesh1x, mesh2x, and the default for contrast — against the measurements, both tests. |
+| **Parameter sensitivity** | One parameter moved at a time about the CSCM default (×0.25 … ×4), on Test 1. 21 solves. A screening study, so it runs on a coarse mesh (*h* = 40 mm) rather than the adopted one — read it for which parameters matter and in which direction, not for absolute scores. Four cells are empty because CSCM requires α > λ and the solver rejects the rest at initialisation. |
+| **Mesh convergence** | Nine refinement levels at the default, *h* = 174 → 13 mm, each on its own mesh. This is where *h* = 20 mm is adopted. Two levels are flagged `unsound`: their energy balance falls below 0.40, so they are numerical failures rather than data points. |
+| **Calibrated model** | The adopted parameter set against the auto-generated default, both on the adopted mesh, both tests. |
 
 Every view gives the contact force, the P1 and P4 lateral
 displacements, and a 3D per-face damage view of the pier. P1 sits near the
@@ -31,8 +31,8 @@ The envelope is computed in the browser from the documented CSCM formula
 (ported from the project's `cscm_yield_surface.py` and checked against it to
 0.0 MPa). The stress-strain and damage curves are *not* a re-derivation of
 the CSCM equations: they come from 42 single-element LS-DYNA solves on a
-40 mm element -- the representative element length of mesh1x, since CSCM
-regularises softening on element size. Asking the solver to evaluate its own
+40 mm element -- the representative element length of the coarse screening
+mesh that study runs on, since CSCM regularises softening on element size. Asking the solver to evaluate its own
 material model avoids transcribing a damage formulation that is not published
 in this repository.
 
@@ -42,14 +42,32 @@ Each tab is linkable: append `#ofat`, `#mesh` or `#calib`.
 
 | Parameter set | *J* | C<sub>Test1</sub> | C<sub>Test2</sub> | repeats |
 |---|---|---|---|---|
-| mesh1x adopted | 118.1 ± 1.4 | 49.4 ± 1.3 | 68.7 ± 0.9 | 9 |
-| mesh2x adopted | 127.7 ± 5.0 | 41.2 ± 2.4 | 86.4 ± 4.6 | 11 |
-| CSCM default (mesh1x) | 262.3 ± 21.7 | 139.8 ± 3.9 | 122.5 ± 23.4 | 5 |
+| Calibrated | 96.6 ± 2.4 | 60.1 ± 1.1 | 36.5 ± 2.1 | 5 |
+| CSCM auto default | 319.3 ± 18.4 | 218.1 ± 11.8 | 101.1 ± 14.2 | 5 |
+
+| Parameter | default | calibrated | change |
+|---|---|---|---|
+| θ | 0.2851 | 0.1909 | −33% |
+| α | 13.96 | 14.815 | +6% |
+| *E* (GPa) | 25.23 | 18.36 | −27% |
+| GFC (MPa) | 4.515 | 8.525 | +89% |
+| GFT (MPa) | 0.04515 | 0.12694 | +181% |
 
 Scores are repeat means with standard deviations, not single solves. LS-DYNA's
 SMP reduction order is not deterministic here — byte-identical decks run to the
 same cycle count return different results — so a single solve understates a
-parameter set's score, and by a different amount each time.
+parameter set's score, and by a different amount each time. The curves served
+for each case are the repeat *nearest the mean* of five, not the best of them.
+
+Calibration buys repeatability as well as accuracy: the default set's Test 2
+score scatters over 82.3 … 114.6 across five identical decks, the calibrated
+set's over 34.3 … 39.7.
+
+The coarser *h* = 40 mm mesh reaches a better *J* (75.7 ± 3.3) when calibrated
+on itself, and is rejected anyway: it gets there by driving the uniaxial
+compressive strength to 76.7 MPa against the 26.3 MPa concrete the specimens
+were cast from. That is a property of the parameter card, not of the element
+size — probed at a common 40 mm element it stays at 292% of the real strength.
 
 ## Data
 
