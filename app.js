@@ -15,6 +15,12 @@
 // spans z = 1365..1635 mm with its face at x = +505, so the strike is at
 // z = 1500 on the +x side, on the y = 0 centreline. An earlier value of 2000
 // here drew the arrow half a metre above where the pier is actually hit.
+// Lowest energy ratio w/o eroded energy a solve may reach and still count
+// as a data point. Below this it has shed most of its energy to deleted
+// material: it completed, but it is a numerical failure. Used by both the
+// mesh view and the sensitivity view.
+const UNSOUND = 0.40;
+
 const PIER_R = 500, PIER_H = 4840;
 const IMPACT_Z = 1500, IMPACT_FACE_X = 505;
 
@@ -430,8 +436,16 @@ function pickOfatParam(p) {
       b.title = "CSCM requires alpha > lamda; the solver rejects this deck";
     } else {
       b.dataset.label = label;
+      const row = g.meta.cases.find((r) => r.label === label);
+      const bad = row && row.energy_ratio < UNSOUND;
       b.innerHTML = `<span class="lead">${ofatValue(g.layout, p, c)}</span>` +
-                    `<span class="trail">${c === 1 ? "default" : `×${c}`}</span>`;
+                    (bad ? `<span class="badge">unsound</span>`
+                         : `<span class="trail">${c === 1 ? "default" : `×${c}`}</span>`);
+      if (bad) {
+        b.title = `energy ratio ${row.energy_ratio}: this solve shed most of its ` +
+                  `energy to eroded material. It ran to completion but it is a ` +
+                  `numerical failure, not a data point.`;
+      }
       b.addEventListener("click", () => selectOfat(p, c));
       if (fallback === null || c === 1) fallback = c;
     }
@@ -453,9 +467,12 @@ async function selectOfat(p, mult) {
 
   const shownVal = ofatValue(g.layout, p, mult);
   const baseVal = ofatValue(g.layout, p, 1);
-  $("#ofat-note").textContent = mult === 1
+  const warn = row && row.energy_ratio < UNSOUND
+    ? ` UNSOUND: energy ratio ${row.energy_ratio} — this solve shed most of its energy to eroded material, so its response is not a result.`
+    : "";
+  $("#ofat-note").textContent = (mult === 1
     ? `All five parameters at their auto-generated CSCM default.`
-    : `${PARAM_LABEL[p] || p} = ${shownVal}, i.e. ${mult}× its default of ${baseVal}; every other parameter unchanged.`;
+    : `${PARAM_LABEL[p] || p} = ${shownVal}, i.e. ${mult}× its default of ${baseVal}; every other parameter unchanged.`) + warn;
 
   const spec = [["force", "force", "t_force"],
                 ["p1", "p1", "t_p1"],
@@ -517,11 +534,11 @@ function yieldCurve({ alpha, theta, lamda }) {
 
 /** Stress-strain and damage from the single-element solves.
  *
- *  These are LS-DYNA evaluating its own material model on one 40 mm element
+ *  These are LS-DYNA evaluating its own material model on one 19.8 mm element
  *  under prescribed straining -- not the CSCM equations re-derived here. The
- *  element size is that of the coarse screening mesh this sensitivity study
- *  was run on, because CSCM regularises softening on element size and the
- *  probe has to match the mesh being probed.
+ *  element size is the adopted mesh's representative length, (V/N)^(1/3),
+ *  because CSCM regularises softening on element size and the probe has to
+ *  match the mesh being probed.
  */
 function drawElementPanels(p, mult) {
   const g = ofat.element;
@@ -578,8 +595,8 @@ function drawElementPanels(p, mult) {
       : "the element survives the imposed strain");
   }
   $("#ofat-mat-note").textContent = note.join(" · ") +
-    ". One 40 mm element under prescribed uniaxial straining, the same element " +
-    "size as the coarse screening mesh this study runs on. The axes follow the " +
+    ". One 19.8 mm element under prescribed uniaxial straining, the adopted " +
+    "mesh's own element size. The axes follow the " +
     "selected case; faint curves are the " +
     "other multiples and may run off the chart.";
 }
@@ -617,7 +634,6 @@ function drawYieldSurface(p, mult) {
 
 /* ==================================================== view: mesh convergence */
 const meshView = { on: new Set(), active: null, charts: {} };
-const UNSOUND = 0.40;
 
 async function initMesh() {
   const g = await loadGroup("mesh");

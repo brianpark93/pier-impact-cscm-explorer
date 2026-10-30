@@ -12,7 +12,7 @@ here instead, where they can be stepped through rather than squinted at.
 
 | View | What it shows |
 |---|---|
-| **Parameter sensitivity** | One parameter moved at a time about the CSCM default (×0.25 … ×4), on Test 1. 21 solves. A screening study, so it runs on a coarse mesh (*h* = 40 mm) rather than the adopted one — read it for which parameters matter and in which direction, not for absolute scores. Four cells are empty because CSCM requires α > λ and the solver rejects the rest at initialisation. |
+| **Parameter sensitivity** | One parameter moved at a time about the CSCM default (×0.25 … ×4), on Test 1, on the adopted mesh. 21 solves. Four cells are empty because CSCM requires α > λ and the solver rejects the rest at initialisation. Three more are flagged `unsound` — they completed but shed most of their energy to eroded material, and one of them carries the best score in the study. |
 | **Mesh convergence** | Nine refinement levels at the default, *h* = 174 → 13 mm, each on its own mesh. This is where *h* = 20 mm is adopted. Two levels are flagged `unsound`: their energy balance falls below 0.40, so they are numerical failures rather than data points. |
 | **Calibrated model** | The adopted parameter set against the auto-generated default, both on the adopted mesh, both tests. |
 
@@ -31,8 +31,8 @@ The envelope is computed in the browser from the documented CSCM formula
 (ported from the project's `cscm_yield_surface.py` and checked against it to
 0.0 MPa). The stress-strain and damage curves are *not* a re-derivation of
 the CSCM equations: they come from 42 single-element LS-DYNA solves on a
-40 mm element -- the representative element length of the coarse screening
-mesh that study runs on, since CSCM regularises softening on element size. Asking the solver to evaluate its own
+19.8 mm element -- the adopted mesh's own representative element length,
+since CSCM regularises softening on element size. Asking the solver to evaluate its own
 material model avoids transcribing a damage formulation that is not published
 in this repository.
 

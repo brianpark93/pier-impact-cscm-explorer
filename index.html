@@ -49,12 +49,14 @@
         </div>
         <p class="side-intro">
           Every parameter is held at its auto-generated CSCM default and one is
-          moved at a time, on Test&nbsp;1. This is a screening study, so it runs
-          on a coarse mesh (<i>h</i>&nbsp;=&nbsp;40&nbsp;mm) rather than on the
-          adopted one: it is read for which parameters matter and in which
-          direction, not for its absolute scores. Cells marked inadmissible
-          violate CSCM's requirement that &alpha;&nbsp;&gt;&nbsp;&lambda;, and the
-          solver rejects them before it starts.
+          moved at a time, on Test&nbsp;1, on the adopted mesh. Cells marked
+          inadmissible violate CSCM's requirement that
+          &alpha;&nbsp;&gt;&nbsp;&lambda;, and the solver rejects them before it
+          starts. Cells marked <b>unsound</b> ran to completion but shed more
+          than 60% of their energy to eroded material, so they are numerical
+          failures rather than data points &mdash; and one of them produces the
+          best-looking score in the whole study, which is the reason the flag
+          is shown.
         </p>
       </aside>
 
